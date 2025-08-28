@@ -13,7 +13,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
 # Set secure session cookie settings for Hugging Face Spaces and proxies
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_SECURE'] = True  # Set to True for HTTPS (Hugging Face uses HTTPS)
+app.config['SESSION_COOKIE_SECURE'] = False  # Set to False for local development (True for HTTPS)
 
 # Configure upload settings
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
