@@ -41,3 +41,21 @@
     </div>
 </div>
 {% endblock %}
+
+{% block scripts %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const loginForm = document.querySelector('form[method="POST"]');
+        if (loginForm) {
+            loginForm.addEventListener('submit', function(e) {
+                const username = document.getElementById('username').value;
+                // Do not log password for security
+                console.log('[Login Debug] Form submitted. Username:', username);
+            });
+            console.log('[Login Debug] Login form event listener attached.');
+        } else {
+            console.log('[Login Debug] Login form not found.');
+        }
+    });
+</script>
+{% endblock %}
