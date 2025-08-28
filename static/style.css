@@ -1,7 +1,8 @@
 /* Custom styles for AI Chatbot */
 
 .chat-history {
-    max-height: 500px;
+    height: 100%;
+    min-height: 0;
     overflow-y: auto;
     padding: 1rem;
     background: var(--bs-body-bg);
