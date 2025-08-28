@@ -1,0 +1,8 @@
+danny:
+  created_at: '1756406247.6862307'
+  is_admin: true
+  password: scrypt:32768:8:1$FlNLDQgcnmeTGwtm$800044a2439254fcfddc2ad67dd0626cab6c47989db17f62c30a2849af0a3be2162ca12c195e90f332348d159550509b5f59548b4975ee3a50d14ac0b1bb2bc3
+mrsneben:
+  created_at: '1756412277.7038794'
+  is_admin: false
+  password: scrypt:32768:8:1$G7rWnbhbCzt07dhm$fb1af0b6238b5037db30d23af3242d5bfd5de17fdc9568c37ba9cb79619d31e79069b707373fe9ba2eb96a4e627448f8c0d4db5d241ab41a32fa7f9dfc066857
