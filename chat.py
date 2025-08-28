@@ -653,3 +653,13 @@ def download_generated_file(filename):
     except Exception as e:
         logging.error(f"Error downloading generated file: {e}")
         return jsonify({'error': 'Download failed'}), 500
+
+@chat_bp.route('/chat/history')
+def chat_history_page():
+    if 'user_id' not in session:
+        return redirect(url_for('auth.login'))
+    history = load_chat_history(session['user_id'])
+    for entry in history:
+        if 'ai_response_html' not in entry and 'ai_response' in entry:
+            entry['ai_response_html'] = process_markdown_response(entry['ai_response'])
+    return render_template('chat_history.html', chat_history=history, user_id=session['user_id'])
