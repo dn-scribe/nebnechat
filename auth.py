@@ -44,21 +44,26 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        
+        logging.debug(f"Login attempt: username='{username}'")
         if not username or not password:
+            logging.debug("Missing username or password.")
             flash('Please enter both username and password', 'error')
             return render_template('login.html')
-        
         users = load_users()
-        
-        if username in users and verify_password(password, users[username]['password']):
-            session['user_id'] = username
-            session['is_admin'] = users[username].get('is_admin', False)
-            flash(f'Welcome back, {username}!', 'success')
-            return redirect(url_for('chat.chat_page'))
+        logging.debug(f"Loaded users: {list(users.keys())}")
+        if username in users:
+            logging.debug(f"User '{username}' found. Verifying password...")
+            if verify_password(password, users[username]['password']):
+                session['user_id'] = username
+                session['is_admin'] = users[username].get('is_admin', False)
+                logging.debug(f"Login successful for user '{username}'. Session set.")
+                flash(f'Welcome back, {username}!', 'success')
+                return redirect(url_for('chat.chat_page'))
+            else:
+                logging.debug(f"Password verification failed for user '{username}'.")
         else:
-            flash('Invalid username or password', 'error')
-    
+            logging.debug(f"User '{username}' not found.")
+        flash('Invalid username or password', 'error')
     return render_template('login.html')
 
 @auth_bp.route('/register', methods=['GET', 'POST'])
