@@ -1,0 +1,26 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="repl-nix-workspace",
+    version="0.1.0",
+    description="Add your description here",
+    packages=find_packages(),
+    include_package_data=True,
+    install_requires=[
+        "email-validator>=2.3.0",
+        "flask-login>=0.6.3",
+        "flask>=3.1.2",
+        "flask-sqlalchemy>=3.1.1",
+        "gunicorn>=23.0.0",
+        "openai>=1.102.0",
+        "psycopg2-binary>=2.9.10",
+        "flask-wtf>=1.2.2",
+        "pyyaml>=6.0.2",
+        "bcrypt>=4.3.0",
+        "requests>=2.32.5",
+        "werkzeug>=3.1.3",
+        "markdown>=3.8.2",
+        "pygments>=2.19.2",
+    ],
+    python_requires=">=3.11",
+)

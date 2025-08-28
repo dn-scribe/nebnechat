@@ -1,0 +1,214 @@
+{% extends "base.html" %}
+{% block title %}Chat - AI Chatbot{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">
+                    <i class="fas fa-comments"></i> AI Chat
+                </h5>
+                <div class="d-flex gap-2">
+                    <button id="clearHistoryBtn" class="btn btn-outline-warning btn-sm">
+                        <i class="fas fa-trash"></i> Clear History
+                    </button>
+                    <div class="dropdown">
+                        <button class="btn btn-outline-info btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                            <i class="fas fa-cog"></i> Model: <span id="currentModel">gpt-5-mini</span>
+                        </button>
+                        <ul class="dropdown-menu">
+                            {% for model in available_models %}
+                            <li><a class="dropdown-item model-option" href="#" data-model="{{ model }}">{{ model }}</a></li>
+                            {% endfor %}
+                        </ul>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="chatHistory" class="chat-history">
+                    {% for entry in chat_history %}
+                    <div class="chat-message user-message">
+                        <div class="message-header">
+                            <strong><i class="fas fa-user"></i> You</strong>
+                            <div class="d-flex gap-2 align-items-center">
+                                <button class="btn btn-sm btn-outline-secondary copy-btn" data-text="{{ entry.user_message }}">
+                                    <i class="fas fa-copy"></i>
+                                </button>
+                                <small class="text-muted">{{ entry.timestamp }}</small>
+                            </div>
+                        </div>
+                        <div class="message-content">
+                            {{ entry.user_message }}
+                            {% if entry.has_file %}
+                            <small class="text-info d-block">
+                                <i class="fas fa-file"></i> Uploaded: {{ entry.file_name }}
+                            </small>
+                            {% endif %}
+                        </div>
+                    </div>
+                    
+                    <div class="chat-message ai-message">
+                        <div class="message-header">
+                            <strong><i class="fas fa-robot"></i> AI ({{ entry.model }})</strong>
+                            <button class="btn btn-sm btn-outline-secondary copy-btn" data-text="{{ entry.ai_response }}">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                        <div class="message-content">
+                            {% if entry.image_url %}
+                            <img src="{{ entry.image_url }}" class="img-fluid generated-image" alt="Generated image">
+                            <a href="{{ url_for('chat.download_image', image_path=entry.image_url) }}" class="btn btn-sm btn-outline-success mt-2">
+                                <i class="fas fa-download"></i> Download Image
+                            </a>
+                            {% else %}
+                            <div class="ai-response">
+                                {% if entry.ai_response_html %}
+                                    {{ entry.ai_response_html | safe }}
+                                {% else %}
+                                    {{ entry.ai_response }}
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-body">
+                <form id="chatForm" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <label for="message" class="form-label">
+                            <i class="fas fa-comment"></i> Your Message
+                        </label>
+                        <textarea class="form-control" id="message" name="message" rows="3" 
+                                  placeholder="Type your message here..."></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="file" class="form-label">
+                            <i class="fas fa-file-upload"></i> Upload File (optional)
+                        </label>
+                        <input type="file" class="form-control" id="file" name="file" 
+                               accept=".txt,.md,.py,.js,.html,.css,.json,.xml,.yaml,.yml,.sh,.pdf,.csv,.xlsx,.xls,.pptx,.ppt,.docx,.doc,.rtf,.cpp,.c,.java,.php,.rb,.go,.rs,.swift,.kt,.ts,.jsx,.tsx,.vue,.sql,.png,.jpg,.jpeg,.gif,.webp">
+                        <div class="form-text">
+                            <strong>Supported formats (max 32MB):</strong><br>
+                            <small>• <strong>Documents:</strong> PDF, Word, PowerPoint, RTF<br>
+                            • <strong>Spreadsheets:</strong> CSV, Excel<br>
+                            • <strong>Code:</strong> Python, JavaScript, HTML, CSS, JSON, SQL, etc.<br>
+                            • <strong>Images:</strong> PNG, JPG, GIF, WebP<br>
+                            • <strong>Text:</strong> TXT, Markdown, YAML</small>
+                        </div>
+                    </div>
+                    
+                    <!-- Image Generation Options -->
+                    <div class="mb-3" id="imageOptions" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label for="imageModel" class="form-label">
+                                    <i class="fas fa-brain"></i> Image Model
+                                </label>
+                                <select class="form-select" id="imageModel" name="image_model">
+                                    {% for model_id, model_info in available_image_models.items() %}
+                                    <option value="{{ model_id }}" {% if model_id == 'dall-e-3' %}selected{% endif %}>
+                                        {{ model_info.name }}
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="imageSize" class="form-label">
+                                    <i class="fas fa-expand-arrows-alt"></i> Size
+                                </label>
+                                <select class="form-select" id="imageSize" name="image_size">
+                                    <option value="1024x1024">1024x1024</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label for="imageQuality" class="form-label">
+                                    <i class="fas fa-star"></i> Quality
+                                </label>
+                                <select class="form-select" id="imageQuality" name="image_quality">
+                                    <option value="standard">Standard</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- File Generation Options -->
+                    <div class="mb-3" id="fileOptions" style="display: none;">
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label for="fileType" class="form-label">
+                                    <i class="fas fa-file-code"></i> File Type
+                                </label>
+                                <select class="form-select" id="fileType" name="file_type">
+                                    <option value="txt">Text (.txt)</option>
+                                    <option value="md">Markdown (.md)</option>
+                                    <option value="py">Python (.py)</option>
+                                    <option value="js">JavaScript (.js)</option>
+                                    <option value="html">HTML (.html)</option>
+                                    <option value="css">CSS (.css)</option>
+                                    <option value="json">JSON (.json)</option>
+                                    <option value="yaml">YAML (.yaml)</option>
+                                    <option value="csv">CSV (.csv)</option>
+                                    <option value="sql">SQL (.sql)</option>
+                                    <option value="xml">XML (.xml)</option>
+                                </select>
+                            </div>
+                            <div class="col-md-8">
+                                <label for="generateFilename" class="form-label">
+                                    <i class="fas fa-file"></i> Filename
+                                </label>
+                                <input type="text" class="form-control" id="generateFilename" 
+                                       placeholder="Enter filename (extension will be added automatically)">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary" id="sendBtn">
+                            <i class="fas fa-paper-plane"></i> Send Message
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="generateImageBtn">
+                            <i class="fas fa-image"></i> Generate Image
+                        </button>
+                        <button type="button" class="btn btn-info" id="generateFileBtn">
+                            <i class="fas fa-file-code"></i> Generate File
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Loading Modal -->
+<div class="modal fade" id="loadingModal" tabindex="-1" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-body text-center">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <div class="mt-2">Processing...</div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// Pass image model configuration to JavaScript
+window.imageModelConfig = {{ available_image_models | tojson }};
+</script>
+<script src="{{ url_for('static', filename='chat.js') }}"></script>
+{% endblock %}
