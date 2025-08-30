@@ -204,19 +204,35 @@ def send_message():
     try:
         model = request.form.get('model', 'gpt-4.1-mini')
         message = request.form.get('message', '').strip()
-        
+
         if not message and 'file' not in request.files:
             return jsonify({'error': 'Please provide a message or upload a file'}), 400
-        
+
         if model not in AVAILABLE_MODELS:
             model = 'gpt-5-mini'  # Default to gpt-5-mini
-        
+
         # Load chat history for context threading
         history = load_chat_history(session['user_id'])
-        
+
+        # Check for long inactivity (more than 10 minutes since last message)
+        if history:
+            try:
+                last_entry = history[-1]
+                last_time = last_entry.get('timestamp')
+                if last_time:
+                    last_dt = datetime.fromisoformat(last_time)
+                    now_dt = datetime.now()
+                    diff = (now_dt - last_dt).total_seconds()
+                    if diff > 600:  # 600 seconds = 10 minutes
+                        # Clear history and start new chat
+                        history = []
+                        save_chat_history(session['user_id'], history)
+            except Exception as e:
+                logging.error(f"Error checking chat inactivity: {e}")
+
         # Prepare messages for OpenAI with conversation history
         messages = []
-        
+
         # Add conversation context (last 10 exchanges to stay within token limits)
         recent_history = history[-10:] if len(history) > 10 else history
         for entry in recent_history:
