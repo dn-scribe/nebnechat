@@ -4,7 +4,7 @@ import base64
 import logging
 import glob
 from datetime import datetime
-from flask import Blueprint, render_template, request, session, redirect, url_for, flash, jsonify, send_file, Response
+from flask import Blueprint, render_template, request, session, redirect, url_for, flash, jsonify, send_file, Response, g
 from werkzeug.utils import secure_filename
 import requests
 from openai import OpenAI
@@ -19,7 +19,11 @@ chat_bp = Blueprint('chat', __name__)
 
 # OpenAI setup
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your-api-key-here")
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+# Remove global client; use per-request client via Flask's g
+def get_openai_client():
+    if 'openai_client' not in g:
+        g.openai_client = OpenAI(api_key=OPENAI_API_KEY)
+    return g.openai_client
 
 # Available models - updated with all supported OpenAI models
 AVAILABLE_MODELS = [
@@ -362,7 +366,7 @@ def send_message():
 
         # Call OpenAI API
         logging.info(f"Making API request with model: {model}, input: {input_payload}")
-        response = openai_client.responses.create(
+        response = get_openai_client().responses.create(
             model=model,
             input=input_payload,
             tools=tools if tools else None
@@ -482,7 +486,7 @@ The content should be ready to save directly as a .{file_type} file.
                 )
 
         # Call OpenAI API
-        response = openai_client.responses.create(
+        response = get_openai_client().responses.create(
             model=model,
             input=input_payload,
             tools=tools if tools else None
@@ -578,7 +582,7 @@ def generate_image():
             api_params['quality'] = image_quality
         
         # Generate image using selected model
-        response = openai_client.images.generate(**api_params)
+        response = get_openai_client().images.generate(**api_params)
         
         if not response or not response.data or len(response.data) == 0:
             return jsonify({'error': 'Failed to generate image'}), 500
