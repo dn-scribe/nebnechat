@@ -209,6 +209,22 @@
 <script>
 // Pass image model configuration to JavaScript
 window.imageModelConfig = {{ available_image_models | tojson }};
+
+// Detect Hebrew and set direction RTL for message content
+document.addEventListener('DOMContentLoaded', function() {
+    function containsHebrew(text) {
+        return /[\u0590-\u05FF]/.test(text);
+    }
+    document.querySelectorAll('.message-content, .ai-response').forEach(function(el) {
+        if (containsHebrew(el.textContent)) {
+            el.setAttribute('dir', 'rtl');
+            el.style.textAlign = 'right';
+        } else {
+            el.setAttribute('dir', 'ltr');
+            el.style.textAlign = '';
+        }
+    });
+});
 </script>
 <script src="{{ url_for('static', filename='chat.js') }}"></script>
 {% endblock %}
