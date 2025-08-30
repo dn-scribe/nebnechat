@@ -198,7 +198,7 @@ def send_message():
         return jsonify({'error': 'Not authenticated'}), 401
     
     try:
-        model = request.form.get('model', 'gpt-5')
+        model = request.form.get('model', 'gpt-4.1-mini')
         message = request.form.get('message', '').strip()
         
         if not message and 'file' not in request.files:
@@ -236,7 +236,7 @@ def send_message():
         # Add text message if provided
         if message:
             content_parts.append({
-                "type": "text",
+                "type": "input_text",
                 "text": message
             })
         
@@ -282,10 +282,8 @@ def send_message():
                     base64_image = encode_image(filepath)
                     if base64_image:
                         content_parts.append({
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            }
+                            "type": "input_image",
+                            "image_url": f"data:image/jpeg;base64,{base64_image}"
                         })
                     else:
                         return jsonify({'error': 'Failed to process image'}), 400
@@ -296,7 +294,7 @@ def send_message():
                         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                             file_content = f.read()
                         content_parts.append({
-                            "type": "text", 
+                            "type": "input_text",
                             "text": f"File content ({filename}):\n```{file_ext}\n{file_content}\n```"
                         })
                     except Exception as e:
@@ -308,7 +306,7 @@ def send_message():
                     if file_ext == 'pdf':
                         # For PDF files, provide file information and mention OpenAI can process it
                         content_parts.append({
-                            "type": "text",
+                            "type": "input_text",
                             "text": f"I've received your PDF file '{filename}' (size: {file_size_mb:.1f}MB). " +
                                    f"The file is now available at: {filepath}. PDF files are well-supported by OpenAI models. " +
                                    "Please describe what you'd like me to do with this file."
@@ -316,7 +314,7 @@ def send_message():
                     else:
                         # Other document formats
                         content_parts.append({
-                            "type": "text",
+                            "type": "input_text",
                             "text": f"I've received your {file_ext.upper()} file '{filename}' (size: {file_size_mb:.1f}MB). " +
                                    f"The file is saved at: {filepath}. " +
                                    "Note: PDF files work most reliably with OpenAI. Other formats may have limited support."
@@ -337,16 +335,39 @@ def send_message():
             "content": content_parts
         })
         
+        # Prepare OpenAI responses.create input
+        input_payload = [{
+            "role": "user",
+            "content": content_parts
+        }]
+
+        # Websearch tool support (optional, via form field)
+        websearch = True
+        websearch_supported_models = [
+            "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
+        ]
+        tools = []
+        websearch_warning = None
+        if websearch:
+            if any(model.startswith(m) for m in websearch_supported_models):
+                tools = [{
+                    "type": "web_search_preview",
+                    "search_context_size": "low"
+                }]
+            else:
+                websearch_warning = (
+                    "Web search is not supported for the selected model. "
+                    "Supported models: gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, o4-mini, o3, gpt-5."
+                )
+
         # Call OpenAI API
-        logging.info(f"Making API request with model: {model}, messages: {len(messages)} messages")
-        response = openai_client.chat.completions.create(
+        logging.info(f"Making API request with model: {model}, input: {input_payload}")
+        response = openai_client.responses.create(
             model=model,
-            messages=messages,
-            max_completion_tokens=1000
+            input=input_payload,
+            tools=tools if tools else None
         )
-        logging.info(f"API response received: {len(response.choices)} choices")
-        
-        ai_response = response.choices[0].message.content
+        ai_response = getattr(response, "output_text", None)
         
         # Debug logging for empty responses
         if not ai_response:
@@ -430,18 +451,44 @@ Please provide ONLY the file content without any explanations, markdown formatti
 The content should be ready to save directly as a .{file_type} file.
 """
         
+        # Prepare OpenAI responses.create input
+        input_payload = [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": file_generation_prompt
+                }
+            ]
+        }]
+
+        # Websearch tool support (optional, via form field)
+        websearch = request.form.get('websearch', 'off') == 'on'
+        websearch_supported_models = [
+            "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
+        ]
+        tools = []
+        websearch_warning = None
+        if websearch:
+            if any(model.startswith(m) for m in websearch_supported_models):
+                tools = [{
+                    "type": "web_search_preview",
+                    "search_context_size": "low"
+                }]
+            else:
+                websearch_warning = (
+                    "Web search is not supported for the selected model. "
+                    "Supported models: gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, o4-mini, o3, gpt-5."
+                )
+
         # Call OpenAI API
-        response = openai_client.chat.completions.create(
+        response = openai_client.responses.create(
             model=model,
-            messages=[{
-                "role": "user",
-                "content": file_generation_prompt
-            }],
-            max_completion_tokens=2000
+            input=input_payload,
+            tools=tools if tools else None
         )
-        
-        file_content = response.choices[0].message.content
-        
+        file_content = getattr(response, "output_text", None)
+
         if not file_content:
             return jsonify({'error': 'Failed to generate file content'}), 500
         
@@ -473,14 +520,18 @@ The content should be ready to save directly as a .{file_type} file.
         history.append(chat_entry)
         save_chat_history(session['user_id'], history)
         
-        return jsonify({
+        response_payload = {
             'success': True,
             'filename': safe_filename,
             'file_path': file_path,
             'download_url': f'/chat/download-generated/{safe_filename}',
             'timestamp': chat_entry['timestamp'],
             'model': model
-        })
+        }
+        if websearch_warning:
+            response_payload['warning'] = websearch_warning
+
+        return jsonify(response_payload)
         
     except Exception as e:
         logging.error(f"Error generating file: {e}")
