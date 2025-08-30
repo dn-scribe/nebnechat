@@ -23,6 +23,29 @@
                             {% endfor %}
                         </ul>
                     </div>
+                    <div class="dropdown">
+                        <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="sessionsDropdownBtn" data-bs-toggle="dropdown" aria-expanded="false">
+                            <i class="fas fa-history"></i> Sessions
+                        </button>
+                        <ul class="dropdown-menu" id="sessionsDropdownMenu" aria-labelledby="sessionsDropdownBtn">
+                            {% if chat_sessions %}
+                                {% for session in chat_sessions %}
+                                    <li class="dropdown-item d-flex justify-content-between align-items-center">
+                                        <span>
+                                            {{ session.created_at[:16].replace('T', ' ') if session.created_at else 'No Date' }}<br>
+                                            <small class="text-muted">
+                                                {% set first_msg = (session.exchanges[0].user_message if session.exchanges and session.exchanges[0].user_message else 'No summary') %}
+                                                {{ first_msg.split()[:10]|join(' ') }}{% if first_msg.split()|length > 10 %}...{% endif %}
+                                            </small>
+                                        </span>
+                                        <button type="button" class="btn btn-sm btn-outline-primary ms-2 revert-session-btn" data-session-id="{{ session.session_id }}">Revert</button>
+                                    </li>
+                                {% endfor %}
+                            {% else %}
+                                <li class="dropdown-item text-muted">No chat history found.</li>
+                            {% endif %}
+                        </ul>
+                    </div>
                 </div>
             </div>
             <div class="card-body p-0">
