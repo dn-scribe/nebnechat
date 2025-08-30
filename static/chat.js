@@ -1,5 +1,17 @@
 // Chat functionality for AI Chatbot
 class ChatApp {
+    // Utility: Set RTL if Hebrew detected
+    setDirectionForHebrew(el) {
+        if (!el) return;
+        const containsHebrew = /[\u0590-\u05FF]/.test(el.textContent);
+        if (containsHebrew) {
+            el.setAttribute('dir', 'rtl');
+            el.style.textAlign = 'right';
+        } else {
+            el.setAttribute('dir', 'ltr');
+            el.style.textAlign = '';
+        }
+    }
     constructor() {
         this.currentModel = 'gpt-5-mini'; // Default to gpt-5-mini
         this.imageOptionsVisible = false;
@@ -311,7 +323,10 @@ class ChatApp {
         chatHistory.appendChild(userMessageDiv);
         chatHistory.appendChild(aiMessageDiv);
         
-        this.scrollToBottom();
+    // Set RTL/LTR for Hebrew
+    this.setDirectionForHebrew(userMessageDiv.querySelector('.message-content'));
+    this.setDirectionForHebrew(aiMessageDiv.querySelector('.ai-response'));
+    this.scrollToBottom();
     }
 
     addImageToChat(entry) {
@@ -349,7 +364,9 @@ class ChatApp {
         chatHistory.appendChild(userMessageDiv);
         chatHistory.appendChild(aiMessageDiv);
         
-        this.scrollToBottom();
+    // Set RTL/LTR for Hebrew
+    this.setDirectionForHebrew(userMessageDiv.querySelector('.message-content'));
+    this.scrollToBottom();
     }
 
     handleFileButtonClick() {
