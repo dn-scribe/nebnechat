@@ -129,44 +129,78 @@ def process_markdown_response(text):
     
     return html_content
 
-def load_chat_history(user_id):
-    """Load user's chat history"""
+import uuid
+
+def load_chat_sessions(user_id):
+    """Load user's chat sessions (list of sessions, each a dict with metadata and exchanges)"""
     filename = f'chat_history_{user_id}.json'
     try:
         if os.path.exists(filename):
             with open(filename, 'r') as f:
-                return json.load(f)
+                data = json.load(f)
+                if isinstance(data, list) and data and isinstance(data[0], dict) and "exchanges" in data[0]:
+                    return data
+                # Migrate old flat history to a single session
+                elif isinstance(data, list):
+                    session = {
+                        "session_id": str(uuid.uuid4()),
+                        "created_at": datetime.now().isoformat(),
+                        "updated_at": datetime.now().isoformat(),
+                        "exchanges": data
+                    }
+                    return [session]
         return []
     except Exception as e:
-        logging.error(f"Error loading chat history for {user_id}: {e}")
+        logging.error(f"Error loading chat sessions for {user_id}: {e}")
         return []
 
-def save_chat_history(user_id, history):
-    """Save user's chat history (keep only last 10 exchanges) and clean up associated files"""
+def save_chat_sessions(user_id, sessions):
+    """Save user's chat sessions (keep only last 10 sessions)"""
     filename = f'chat_history_{user_id}.json'
     try:
-        # Clean up files from entries that will be removed
-        if len(history) > 10:
-            entries_to_remove = history[:-10]
-            for entry in entries_to_remove:
-                if entry.get('has_file') and entry.get('file_name'):
-                    # Try to find and remove the associated file
-                    for file_path in glob.glob(f"uploads/{user_id}_*_{entry['file_name']}"):
-                        try:
-                            os.remove(file_path)
-                            logging.info(f"Cleaned up file: {file_path}")
-                        except Exception as e:
-                            logging.error(f"Error removing file {file_path}: {e}")
-            
-            # Keep only the last 10 conversations
-            history = history[-10:]
-        
+        # Clean up files from entries that will be removed (from dropped sessions)
+        if len(sessions) > 10:
+            sessions_to_remove = sessions[:-10]
+            for session in sessions_to_remove:
+                for entry in session.get("exchanges", []):
+                    if entry.get('has_file') and entry.get('file_name'):
+                        for file_path in glob.glob(f"uploads/{user_id}_*_{entry['file_name']}"):
+                            try:
+                                os.remove(file_path)
+                                logging.info(f"Cleaned up file: {file_path}")
+                            except Exception as e:
+                                logging.error(f"Error removing file {file_path}: {e}")
+            sessions = sessions[-10:]
         with open(filename, 'w') as f:
-            json.dump(history, f, indent=2)
+            json.dump(sessions, f, indent=2)
         return True
     except Exception as e:
-        logging.error(f"Error saving chat history for {user_id}: {e}")
+        logging.error(f"Error saving chat sessions for {user_id}: {e}")
         return False
+
+def get_current_session(user_id):
+    """Get the current session (last in list) or create a new one if none exists."""
+    sessions = load_chat_sessions(user_id)
+    if not sessions:
+        session = {
+            "session_id": str(uuid.uuid4()),
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "exchanges": []
+        }
+        save_chat_sessions(user_id, [session])
+        return session, [session]
+    return sessions[-1], sessions
+
+def set_current_session(user_id, session):
+    """Set the given session as the current session (move to end of list)"""
+    sessions = load_chat_sessions(user_id)
+    # Remove if already present
+    sessions = [s for s in sessions if s["session_id"] != session["session_id"]]
+    session["updated_at"] = datetime.now().isoformat()
+    sessions.append(session)
+    save_chat_sessions(user_id, sessions)
+    return True
 
 def encode_image(image_path):
     """Encode image to base64"""
@@ -182,15 +216,17 @@ def chat_page():
     if 'user_id' not in session:
         return redirect(url_for('auth.login'))
     
-    history = load_chat_history(session['user_id'])
+    current_session, sessions = get_current_session(session['user_id'])
+    history = current_session["exchanges"]
     
     # Process any existing history entries that don't have HTML processed responses
     for entry in history:
         if 'ai_response_html' not in entry and 'ai_response' in entry:
             entry['ai_response_html'] = process_markdown_response(entry['ai_response'])
     
-    return render_template('chat.html', 
-                         chat_history=history, 
+    return render_template('chat.html',
+                         chat_history=history,
+                         chat_sessions=sessions,
                          available_models=AVAILABLE_MODELS,
                          available_image_models=AVAILABLE_IMAGE_MODELS,
                          user_id=session['user_id'],
@@ -200,7 +236,7 @@ def chat_page():
 def send_message():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-    
+
     try:
         model = request.form.get('model', 'gpt-4.1-mini')
         message = request.form.get('message', '').strip()
@@ -211,22 +247,30 @@ def send_message():
         if model not in AVAILABLE_MODELS:
             model = 'gpt-5-mini'  # Default to gpt-5-mini
 
-        # Load chat history for context threading
-        history = load_chat_history(session['user_id'])
+        # Load current session and all sessions
+        current_session, sessions = get_current_session(session['user_id'])
 
         # Check for long inactivity (more than 10 minutes since last message)
-        if history:
+        exchanges = current_session["exchanges"]
+        if exchanges:
             try:
-                last_entry = history[-1]
+                last_entry = exchanges[-1]
                 last_time = last_entry.get('timestamp')
                 if last_time:
                     last_dt = datetime.fromisoformat(last_time)
                     now_dt = datetime.now()
                     diff = (now_dt - last_dt).total_seconds()
                     if diff > 600:  # 600 seconds = 10 minutes
-                        # Clear history and start new chat
-                        history = []
-                        save_chat_history(session['user_id'], history)
+                        # Archive current session and start new one
+                        current_session = {
+                            "session_id": str(uuid.uuid4()),
+                            "created_at": datetime.now().isoformat(),
+                            "updated_at": datetime.now().isoformat(),
+                            "exchanges": []
+                        }
+                        sessions.append(current_session)
+                        save_chat_sessions(session['user_id'], sessions)
+                        exchanges = current_session["exchanges"]
             except Exception as e:
                 logging.error(f"Error checking chat inactivity: {e}")
 
@@ -234,71 +278,55 @@ def send_message():
         messages = []
 
         # Add conversation context (last 10 exchanges to stay within token limits)
-        recent_history = history[-10:] if len(history) > 10 else history
+        recent_history = exchanges[-10:] if len(exchanges) > 10 else exchanges
         for entry in recent_history:
-            # Add user message (handle both string and structured content)
             user_content = entry.get('user_message', '')
-            if user_content:  # Only add non-empty user messages
+            if user_content:
                 messages.append({
                     "role": "user",
                     "content": user_content
                 })
-            # Add AI response
             if entry.get('ai_response'):
                 messages.append({
-                    "role": "assistant", 
+                    "role": "assistant",
                     "content": entry['ai_response']
                 })
-        
+
         # Prepare current message content parts
         content_parts = []
-        
-        # Add text message if provided
+
         if message:
             content_parts.append({
                 "type": "input_text",
                 "text": message
             })
-        
+
         # Handle file upload
         uploaded_file = None
         if 'file' in request.files:
             file = request.files['file']
             if file and file.filename and allowed_file(file.filename):
-                # Preserve original filename but make it secure
                 original_filename = file.filename
                 safe_filename = secure_filename(original_filename)
-                
-                # If secure_filename removes the extension, add it back
                 if '.' in original_filename and '.' not in safe_filename:
                     file_ext = original_filename.rsplit('.', 1)[1].lower()
                     safe_filename = f"{safe_filename}.{file_ext}"
-                
-                # Create uploads directory if it doesn't exist
                 os.makedirs('uploads', exist_ok=True)
-                
-                # Use timestamp to avoid conflicts
                 timestamp = int(datetime.now().timestamp())
                 filepath = os.path.join('uploads', f"{session['user_id']}_{timestamp}_{safe_filename}")
                 file.save(filepath)
                 uploaded_file = filepath
-                filename = safe_filename  # Update filename variable for later use
-                
-                # Check file size
+                filename = safe_filename
                 try:
                     file_size_mb = get_file_size_mb(filepath)
                     if file_size_mb > MAX_FILE_SIZE_MB:
-                        os.remove(filepath)  # Clean up
+                        os.remove(filepath)
                         return jsonify({'error': f'File too large. Maximum size is {MAX_FILE_SIZE_MB}MB, your file is {file_size_mb:.1f}MB'}), 400
                 except Exception as e:
                     logging.error(f"Error checking file size: {e}")
                     return jsonify({'error': 'Error processing file'}), 400
-                
-                # Handle different file types
                 file_ext = filename.lower().split('.')[-1] if '.' in filename else ''
-                
                 if file_ext in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
-                    # Image file - for vision models
                     base64_image = encode_image(filepath)
                     if base64_image:
                         content_parts.append({
@@ -307,9 +335,7 @@ def send_message():
                         })
                     else:
                         return jsonify({'error': 'Failed to process image'}), 400
-                
                 elif file_ext in {'txt', 'md', 'py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'sh', 'cpp', 'c', 'java', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'ts', 'jsx', 'tsx', 'vue', 'sql', 'rtf'}:
-                    # Text-based files
                     try:
                         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                             file_content = f.read()
@@ -320,11 +346,8 @@ def send_message():
                     except Exception as e:
                         logging.error(f"Error reading text file: {e}")
                         return jsonify({'error': 'Failed to read text file'}), 400
-                
                 elif file_ext in {'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'csv'}:
-                    # Document files - try to read basic content or provide file info
                     if file_ext == 'pdf':
-                        # For PDF files, provide file information and mention OpenAI can process it
                         content_parts.append({
                             "type": "input_text",
                             "text": f"I've received your PDF file '{filename}' (size: {file_size_mb:.1f}MB). " +
@@ -332,36 +355,30 @@ def send_message():
                                    "Please describe what you'd like me to do with this file."
                         })
                     else:
-                        # Other document formats
                         content_parts.append({
                             "type": "input_text",
                             "text": f"I've received your {file_ext.upper()} file '{filename}' (size: {file_size_mb:.1f}MB). " +
                                    f"The file is saved at: {filepath}. " +
                                    "Note: PDF files work most reliably with OpenAI. Other formats may have limited support."
                         })
-                
                 else:
                     return jsonify({'error': f'Unsupported file type: {file_ext}'}), 400
-            
             elif file and file.filename:
                 return jsonify({'error': 'File type not supported'}), 400
-        
+
         if not content_parts:
             return jsonify({'error': 'No valid content provided'}), 400
-        
-        # Add current user message to conversation thread
+
         messages.append({
             "role": "user",
             "content": content_parts
         })
-        
-        # Prepare OpenAI responses.create input
+
         input_payload = [{
             "role": "user",
             "content": content_parts
         }]
 
-        # Websearch tool support (optional, via form field)
         websearch = True
         websearch_supported_models = [
             "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
@@ -380,7 +397,6 @@ def send_message():
                     "Supported models: gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, o4-mini, o3, gpt-5."
                 )
 
-        # Call OpenAI API
         logging.info(f"Making API request with model: {model}, input: {input_payload}")
         response = get_openai_client().responses.create(
             model=model,
@@ -388,16 +404,13 @@ def send_message():
             tools=tools if tools else None
         )
         ai_response = getattr(response, "output_text", None)
-        
-        # Debug logging for empty responses
+
         if not ai_response:
             logging.warning(f"Empty response from model {model} for user {session['user_id']}")
             ai_response = "I apologize, but I couldn't generate a response. Please try again."
-        
-        # Process markdown in AI response
+
         ai_response_html = process_markdown_response(ai_response)
-        
-        # Save to chat history  
+
         chat_entry = {
             'timestamp': datetime.now().isoformat(),
             'model': model,
@@ -407,31 +420,30 @@ def send_message():
             'has_file': uploaded_file is not None,
             'file_name': os.path.basename(uploaded_file) if uploaded_file else None
         }
-        
-        # Note: history was already loaded above for threading context
-        history.append(chat_entry)
-        save_chat_history(session['user_id'], history)
-        
-        # Clean up uploaded file after a delay (keep for user reference but clean old files)
-        # Note: We keep files temporarily for user reference and clean up old files periodically
+
+        # Append to current session
+        current_session["exchanges"].append(chat_entry)
+        current_session["updated_at"] = datetime.now().isoformat()
+        # Save sessions (move current to end)
+        set_current_session(session['user_id'], current_session)
+
         if uploaded_file and os.path.exists(uploaded_file):
             try:
-                # Only clean up files older than 1 hour to allow users to see their uploads
                 file_age = os.path.getmtime(uploaded_file)
                 current_time = datetime.now().timestamp()
-                if current_time - file_age > 3600:  # 1 hour
+                if current_time - file_age > 3600:
                     os.remove(uploaded_file)
                     logging.info(f"Cleaned up old file: {uploaded_file}")
             except Exception as e:
                 logging.error(f"Error during file cleanup check: {e}")
-        
+
         return jsonify({
             'success': True,
             'response': ai_response_html,
             'timestamp': chat_entry['timestamp'],
             'model': model
         })
-        
+
     except Exception as e:
         logging.error(f"Error in chat: {e}")
         return jsonify({'error': f'Error processing request: {str(e)}'}), 500
@@ -536,9 +548,10 @@ The content should be ready to save directly as a .{file_type} file.
             'file_name': safe_filename
         }
         
-        history = load_chat_history(session['user_id'])
+        current_session, _ = get_current_session(session['user_id'])
+        history = current_session["exchanges"]
         history.append(chat_entry)
-        save_chat_history(session['user_id'], history)
+        set_current_session(session['user_id'], current_session)
         
         response_payload = {
             'success': True,
@@ -621,9 +634,10 @@ def generate_image():
             'has_file': False
         }
         
-        history = load_chat_history(session['user_id'])
+        current_session, _ = get_current_session(session['user_id'])
+        history = current_session["exchanges"]
         history.append(chat_entry)
-        save_chat_history(session['user_id'], history)
+        set_current_session(session['user_id'], current_session)
         
         return jsonify({
             'success': True,
@@ -640,15 +654,73 @@ def generate_image():
 def clear_history():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-    
+
     try:
-        filename = f'chat_history_{session["user_id"]}.json'
-        if os.path.exists(filename):
-            os.remove(filename)
+        # Archive current session and start a new one
+        sessions = load_chat_sessions(session['user_id'])
+        new_session = {
+            "session_id": str(uuid.uuid4()),
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "exchanges": []
+        }
+        sessions.append(new_session)
+        save_chat_sessions(session['user_id'], sessions)
         return jsonify({'success': True})
     except Exception as e:
         logging.error(f"Error clearing chat history: {e}")
         return jsonify({'error': 'Failed to clear history'}), 500
+
+# --- New endpoints for session management ---
+
+@chat_bp.route('/chat/sessions', methods=['GET'])
+def list_sessions():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+    sessions = load_chat_sessions(session['user_id'])
+    # Return metadata only
+    session_list = [
+        {
+            "session_id": s["session_id"],
+            "created_at": s["created_at"],
+            "updated_at": s.get("updated_at", s["created_at"]),
+            "num_exchanges": len(s.get("exchanges", []))
+        }
+        for s in sessions
+    ]
+    return jsonify(session_list)
+
+@chat_bp.route('/chat/sessions/revert', methods=['POST'])
+def revert_session():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+    session_id = request.json.get("session_id")
+    sessions = load_chat_sessions(session['user_id'])
+    found = None
+    for s in sessions:
+        if s["session_id"] == session_id:
+            found = s
+            break
+    if not found:
+        return jsonify({'error': 'Session not found'}), 404
+    # Move found session to end (current)
+    set_current_session(session['user_id'], found)
+    return jsonify({'success': True})
+
+@chat_bp.route('/chat/sessions/new', methods=['POST'])
+def new_session():
+    if 'user_id' not in session:
+        return jsonify({'error': 'Not authenticated'}), 401
+    sessions = load_chat_sessions(session['user_id'])
+    new_session = {
+        "session_id": str(uuid.uuid4()),
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat(),
+        "exchanges": []
+    }
+    sessions.append(new_session)
+    save_chat_sessions(session['user_id'], sessions)
+    return jsonify({'success': True, 'session_id': new_session["session_id"]})
 
 @chat_bp.route('/chat/download-image/<path:image_path>')
 def download_image(image_path):
@@ -729,7 +801,8 @@ def download_generated_file(filename):
 def chat_history_page():
     if 'user_id' not in session:
         return redirect(url_for('auth.login'))
-    history = load_chat_history(session['user_id'])
+    current_session, _ = get_current_session(session['user_id'])
+    history = current_session["exchanges"]
     for entry in history:
         if 'ai_response_html' not in entry and 'ai_response' in entry:
             entry['ai_response_html'] = process_markdown_response(entry['ai_response'])

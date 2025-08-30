@@ -30,6 +30,37 @@ class ChatApp {
             });
         }
 
+        // Revert session button (Sessions dropdown)
+        document.addEventListener('click', async (e) => {
+            const btn = e.target.closest('.revert-session-btn');
+            if (btn) {
+                const sessionId = btn.getAttribute('data-session-id');
+                if (!sessionId) return;
+                try {
+                    const loadingModal = this.showLoading();
+                    const resp = await fetch('/chat/sessions/revert', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ session_id: sessionId })
+                    });
+                    if (!resp.ok) {
+                        throw new Error('Failed to revert session');
+                    }
+                    const data = await resp.json();
+                    if (data.success) {
+                        window.location.reload();
+                    } else {
+                        this.showError(data.error || 'Failed to revert session');
+                    }
+                    this.hideLoading(loadingModal);
+                } catch (err) {
+                    this.showError('Network error. Please try again.');
+                }
+            }
+        });
+
         // Model selection
         document.querySelectorAll('.model-option').forEach(option => {
             option.addEventListener('click', (e) => {
