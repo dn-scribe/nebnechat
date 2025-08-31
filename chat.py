@@ -73,7 +73,7 @@ ALLOWED_EXTENSIONS = {
 }
 
 # File size limits (in MB)
-MAX_FILE_SIZE_MB = 32
+MAX_FILE_SIZE_MB = 150
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 def allowed_file(filename):
@@ -164,13 +164,22 @@ def load_chat_sessions(user_id):
         return []
 
 def save_chat_sessions(user_id, sessions):
-    """Save user's chat sessions (keep only last 10 sessions)"""
+    """Save user's chat sessions (keep only last 10 sessions) and delete OpenAI vector store if session is deleted"""
     filename = f'/tmp/chat_history_{user_id}.json'
     try:
         # Clean up files from entries that will be removed (from dropped sessions)
         if len(sessions) > 10:
             sessions_to_remove = sessions[:-10]
             for session in sessions_to_remove:
+                # Delete OpenAI vector store if present
+                vector_store_id = session.get("vector_store_id")
+                if vector_store_id:
+                    try:
+                        client = get_openai_client()
+                        client.vector_stores.delete(vector_store_id=vector_store_id)
+                        logging.info(f"Deleted OpenAI vector store {vector_store_id}")
+                    except Exception as e:
+                        logging.error(f"Error deleting OpenAI vector store {vector_store_id}: {e}")
                 for entry in session.get("exchanges", []):
                     if entry.get('has_file') and entry.get('file_name'):
                         for file_path in glob.glob(f"tmp/uploads/{user_id}_*_{entry['file_name']}"):
@@ -254,6 +263,7 @@ def send_message():
     try:
         model = request.form.get('model', 'gpt-4.1-mini')
         message = request.form.get('message', '').strip()
+        user_id = session['user_id']
 
         if not message and 'file' not in request.files:
             return jsonify({'error': 'Please provide a message or upload a file'}), 400
@@ -262,18 +272,33 @@ def send_message():
             model = 'gpt-5-mini'  # Default to gpt-5-mini
 
         # Load current session and all sessions
-        current_session, sessions = get_current_session(session['user_id'])
+        current_session, sessions = get_current_session(user_id)
 
         # If no session exists or last session has exchanges, create a new session
         if not current_session or (current_session and current_session.get("exchanges")):
+            # Create a new OpenAI vector store for this session
+            client = get_openai_client()
+            vs_name = f"session_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            vs = client.vector_stores.create(name=vs_name)
+            vector_store_id = vs.id
             current_session = {
                 "session_id": str(uuid.uuid4()),
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat(),
                 "exchanges": [],
-                "summary": ""
+                "summary": "",
+                "vector_store_id": vector_store_id
             }
             sessions.append(current_session)
+        else:
+            vector_store_id = current_session.get("vector_store_id")
+            if not vector_store_id:
+                # If missing, create one for this session
+                client = get_openai_client()
+                vs_name = f"session_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                vs = client.vector_stores.create(name=vs_name)
+                vector_store_id = vs.id
+                current_session["vector_store_id"] = vector_store_id
 
         # Check for long inactivity (more than 10 minutes since last message)
         exchanges = current_session["exchanges"]
@@ -287,15 +312,20 @@ def send_message():
                     diff = (now_dt - last_dt).total_seconds()
                     if diff > 600:  # 600 seconds = 10 minutes
                         # Archive current session and start new one
+                        client = get_openai_client()
+                        vs_name = f"session_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                        vs = client.vector_stores.create(name=vs_name)
+                        vector_store_id = vs.id
                         current_session = {
                             "session_id": str(uuid.uuid4()),
                             "created_at": datetime.now().isoformat(),
                             "updated_at": datetime.now().isoformat(),
                             "exchanges": [],
-                            "summary": ""
+                            "summary": "",
+                            "vector_store_id": vector_store_id
                         }
                         sessions.append(current_session)
-                        save_chat_sessions(session['user_id'], sessions)
+                        save_chat_sessions(user_id, sessions)
                         exchanges = current_session["exchanges"]
             except Exception as e:
                 logging.error(f"Error checking chat inactivity: {e}")
@@ -321,13 +351,6 @@ def send_message():
         # Prepare current message content parts
         content_parts = []
 
-        if message:
-            content_parts.append({
-                "type": "input_text",
-                "text": message
-            })
-
-        # Handle file upload
         uploaded_file = None
         if 'file' in request.files:
             file = request.files['file']
@@ -339,12 +362,13 @@ def send_message():
                     safe_filename = f"{safe_filename}.{file_ext}"
                 os.makedirs('/tmp/uploads', exist_ok=True)
                 timestamp = int(datetime.now().timestamp())
-                filepath = os.path.join('/tmp/uploads', f"{session['user_id']}_{timestamp}_{safe_filename}")
+                filepath = os.path.join('/tmp/uploads', f"{user_id}_{timestamp}_{safe_filename}")
                 file.save(filepath)
                 uploaded_file = filepath
                 filename = safe_filename
                 try:
                     file_size_mb = get_file_size_mb(filepath)
+                    file_size_bytes = os.path.getsize(filepath)
                     if file_size_mb > MAX_FILE_SIZE_MB:
                         os.remove(filepath)
                         return jsonify({'error': f'File too large. Maximum size is {MAX_FILE_SIZE_MB}MB, your file is {file_size_mb:.1f}MB'}), 400
@@ -361,32 +385,35 @@ def send_message():
                         })
                     else:
                         return jsonify({'error': 'Failed to process image'}), 400
-                elif file_ext in {'txt', 'md', 'py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'sh', 'cpp', 'c', 'java', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'ts', 'jsx', 'tsx', 'vue', 'sql', 'rtf'}:
-                    try:
-                        with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                            file_content = f.read()
-                        content_parts.append({
-                            "type": "input_text",
-                            "text": f"File content ({filename}):\n```{file_ext}\n{file_content}\n```"
-                        })
-                    except Exception as e:
-                        logging.error(f"Error reading text file: {e}")
-                        return jsonify({'error': 'Failed to read text file'}), 400
-                elif file_ext in {'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'csv'}:
-                    if file_ext == 'pdf':
-                        content_parts.append({
-                            "type": "input_text",
-                            "text": f"I've received your PDF file '{filename}' (size: {file_size_mb:.1f}MB). " +
-                                   f"The file is now available at: {filepath}. PDF files are well-supported by OpenAI models. " +
-                                   "Please describe what you'd like me to do with this file."
-                        })
+                elif file_ext in {'txt', 'md', 'py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'sh', 'cpp', 'c', 'java', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'ts', 'jsx', 'tsx', 'vue', 'sql', 'rtf', 'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'csv'}:
+                    # If file is >4KB, upload to OpenAI and attach to vector store
+                    if file_size_bytes > 4096:
+                        try:
+                            client = get_openai_client()
+                            with open(filepath, "rb") as f:
+                                file_resp = client.files.create(file=f, purpose="assistants")
+                            file_id = file_resp.id
+                            # Attach file to vector store
+                            vs_id = current_session["vector_store_id"]
+                            client.vector_stores.files.create(vector_store_id=vs_id, file_id=file_id)
+                            content_parts.append({
+                                "type": "input_text",
+                                "text": f"File '{filename}' ({file_size_mb:.1f}MB) uploaded to OpenAI vector store. You can now search its content."
+                            })
+                        except Exception as e:
+                            logging.error(f"OpenAI vector store file upload error: {e}")
+                            return jsonify({'error': 'Failed to upload file to OpenAI vector store'}), 500
                     else:
-                        content_parts.append({
-                            "type": "input_text",
-                            "text": f"I've received your {file_ext.upper()} file '{filename}' (size: {file_size_mb:.1f}MB). " +
-                                   f"The file is saved at: {filepath}. " +
-                                   "Note: PDF files work most reliably with OpenAI. Other formats may have limited support."
-                        })
+                        try:
+                            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                                file_content = f.read()
+                            content_parts.append({
+                                "type": "input_text",
+                                "text": f"File content ({filename}):\n```{file_ext}\n{file_content}\n```"
+                            })
+                        except Exception as e:
+                            logging.error(f"Error reading text file: {e}")
+                            return jsonify({'error': 'Failed to read text file'}), 400
                 else:
                     return jsonify({'error': f'Unsupported file type: {file_ext}'}), 400
             elif file and file.filename:
@@ -405,25 +432,18 @@ def send_message():
             "content": content_parts
         }]
 
-        websearch = True
-        websearch_supported_models = [
-            "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
-        ]
+        # Use file_search tool with vector store if present
         tools = []
         websearch_warning = None
-        if websearch:
-            if any(model.startswith(m) for m in websearch_supported_models):
-                tools = [{
-                    "type": "web_search_preview",
-                    "search_context_size": "low"
-                }]
-            else:
-                websearch_warning = (
-                    "Web search is not supported for the selected model. "
-                    "Supported models: gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, o4-mini, o3, gpt-5."
-                )
+        vs_id = current_session.get("vector_store_id")
+        if vs_id:
+            tools.append({
+                "type": "file_search",
+                "vector_store_ids": [vs_id],
+                "max_num_results": 5
+            })
 
-        logging.info(f"Making API request with model: {model}, input: {input_payload}")
+        logging.info(f"Making API request with model: {model}, input: {input_payload}, tools: {tools}")
         response = get_openai_client().responses.create(
             model=model,
             input=input_payload,
@@ -432,7 +452,7 @@ def send_message():
         ai_response = getattr(response, "output_text", None)
 
         if not ai_response:
-            logging.warning(f"Empty response from model {model} for user {session['user_id']}")
+            logging.warning(f"Empty response from model {model} for user {user_id}")
             ai_response = "I apologize, but I couldn't generate a response. Please try again."
 
         ai_response_html = process_markdown_response(ai_response)
@@ -447,15 +467,16 @@ def send_message():
             'file_name': os.path.basename(uploaded_file) if uploaded_file else None
         }
 
-        # Append to current session
+        # Append to current session, limit to 10 exchanges
         current_session["exchanges"].append(chat_entry)
+        current_session["exchanges"] = current_session["exchanges"][-10:]
         current_session["updated_at"] = datetime.now().isoformat()
         # Set summary if this is the first message in the session
         if len(current_session["exchanges"]) == 1:
             first_msg = chat_entry['user_message']
             current_session["summary"] = " ".join(first_msg.split()[:10]) + ("..." if len(first_msg.split()) > 10 else "")
         # Save sessions (move current to end)
-        set_current_session(session['user_id'], current_session)
+        set_current_session(user_id, current_session)
 
         if uploaded_file and os.path.exists(uploaded_file):
             try:
