@@ -554,18 +554,18 @@ The content should be ready to save directly as a .{file_type} file.
         if not file_content:
             return jsonify({'error': 'Failed to generate file content'}), 500
         
-        # Create generated files directory
-        generated_dir = '/tmp/generated_files'
+        # Create generated files directory (now /tmp/downloaded)
+        generated_dir = '/tmp/downloaded'
         os.makedirs(generated_dir, exist_ok=True)
-        
+
         # Save file with timestamp to avoid conflicts
         timestamp = int(datetime.now().timestamp())
         safe_filename = secure_filename(filename)
         file_path = os.path.join(generated_dir, f"{session['user_id']}_{timestamp}_{safe_filename}")
-        
+
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(file_content)
-        
+
         # Save to chat history
         chat_entry = {
             'timestamp': datetime.now().isoformat(),
@@ -573,21 +573,21 @@ The content should be ready to save directly as a .{file_type} file.
             'user_message': f"Generate {file_type} file: {prompt}",
             'ai_response': f"Generated file: {safe_filename}",
             'ai_response_html': f"Generated file: <strong>{safe_filename}</strong>",
-            'has_file': False,
+            'has_file': True,
             'generated_file': file_path,
-            'file_name': safe_filename
+            'file_name': f"{session['user_id']}_{timestamp}_{safe_filename}"
         }
-        
+
         current_session, _ = get_current_session(session['user_id'])
         history = current_session["exchanges"]
         history.append(chat_entry)
         set_current_session(session['user_id'], current_session)
-        
+
         response_payload = {
             'success': True,
-            'filename': safe_filename,
+            'filename': f"{session['user_id']}_{timestamp}_{safe_filename}",
             'file_path': file_path,
-            'download_url': f'/chat/download-generated/{safe_filename}',
+            'download_url': f"/chat/download-generated/{session['user_id']}_{timestamp}_{safe_filename}",
             'timestamp': chat_entry['timestamp'],
             'model': model
         }
@@ -812,21 +812,18 @@ def download_image(filename):
 
 @chat_bp.route('/chat/download-generated/<filename>')
 def download_generated_file(filename):
-    """Download a generated file"""
+    """Download a generated file from /tmp/downloaded, only if it matches user_id"""
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-    
     try:
-        # Security check - ensure file belongs to current user
-        generated_dir = 'generated_files'
-        user_files = glob.glob(os.path.join(generated_dir, f"{session['user_id']}_*_{filename}"))
-        
-        if not user_files:
+        generated_dir = '/tmp/downloaded'
+        if not filename or '..' in filename or '/' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+        if not filename.startswith(f"{session['user_id']}_"):
+            return jsonify({'error': 'Access denied'}), 403
+        file_path = os.path.join(generated_dir, filename)
+        if not os.path.exists(file_path):
             return jsonify({'error': 'File not found or access denied'}), 404
-        
-        # Get the most recent file if multiple exist
-        file_path = max(user_files, key=os.path.getmtime)
-        
         # Determine MIME type based on extension
         ext = filename.split('.')[-1].lower()
         mime_types = {
@@ -843,16 +840,13 @@ def download_generated_file(filename):
             'sql': 'application/sql',
             'xml': 'application/xml'
         }
-        
         mimetype = mime_types.get(ext, 'text/plain')
-        
         return send_file(
             file_path,
             as_attachment=True,
-            download_name=filename,
+            download_name=filename.split('_', 2)[-1],
             mimetype=mimetype
         )
-        
     except Exception as e:
         logging.error(f"Error downloading generated file: {e}")
         return jsonify({'error': 'Download failed'}), 500
