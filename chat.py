@@ -133,7 +133,7 @@ import uuid
 
 def load_chat_sessions(user_id):
     """Load user's chat sessions (list of sessions, each a dict with metadata and exchanges)"""
-    filename = f'chat_history_{user_id}.json'
+    filename = f'/tmp/chat_history_{user_id}.json'
     try:
         if os.path.exists(filename):
             with open(filename, 'r') as f:
