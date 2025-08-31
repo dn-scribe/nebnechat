@@ -348,6 +348,7 @@ def send_message():
                     "content": entry['ai_response']
                 })
 
+
         # Prepare current message content parts
         content_parts = []
 
@@ -411,27 +412,20 @@ def send_message():
                                 "type": "input_text",
                                 "text": f"File content ({filename}):\n```{file_ext}\n{file_content}\n```"
                             })
+                            
                         except Exception as e:
                             logging.error(f"Error reading text file: {e}")
                             return jsonify({'error': 'Failed to read text file'}), 400
                 else:
                     return jsonify({'error': f'Unsupported file type: {file_ext}'}), 400
-            elif file and file.filename:
-                return jsonify({'error': 'File type not supported'}), 400
 
-        if not content_parts:
-            return jsonify({'error': 'No valid content provided'}), 400
+        if content_parts:
+            messages.extend(content_parts)
 
         messages.append({
-            "role": "user",
-            "content": content_parts
+          "role": "user",
+            "content": message if message else ""
         })
-
-        input_payload = [{
-            "role": "user",
-            "content": content_parts
-        }]
-
         # Use file_search tool with vector store if present
         tools = []
         websearch_warning = None
@@ -443,10 +437,10 @@ def send_message():
                 "max_num_results": 5
             })
 
-        logging.info(f"Making API request with model: {model}, input: {input_payload}, tools: {tools}")
+        logging.info(f"Making API request with model: {model}, input: {messages}, tools: {tools}")
         response = get_openai_client().responses.create(
             model=model,
-            input=input_payload,
+            input=messages,
             tools=tools if tools else None
         )
         ai_response = getattr(response, "output_text", None)
