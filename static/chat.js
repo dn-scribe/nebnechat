@@ -1,5 +1,38 @@
 // Chat functionality for AI Chatbot
 class ChatApp {
+    async refreshSessionsDropdown() {
+        try {
+            const resp = await fetch('/chat/sessions', { method: 'GET' });
+            if (!resp.ok) throw new Error('Failed to fetch sessions');
+            const data = await resp.json();
+            const menu = document.getElementById('sessionsDropdownMenu');
+            if (!menu) return;
+            menu.innerHTML = '';
+            if (data.length === 0) {
+                menu.innerHTML = '<li class="dropdown-item text-muted">No chat history found.</li>';
+                return;
+            }
+            data.forEach(session => {
+                const date = session.created_at ? session.created_at.replace('T', ' ').slice(0, 16) : 'No Date';
+                const summary = session.summary && session.summary.trim() ? session.summary : 'No summary';
+                const li = document.createElement('li');
+                li.className = 'dropdown-item session-list-item';
+                li.setAttribute('data-session-id', session.session_id);
+                li.style.cursor = 'pointer';
+                li.innerHTML = `
+                    <span>
+                        ${date}<br>
+                        <small class="text-muted">${summary}</small>
+                    </span>
+                `;
+                menu.appendChild(li);
+            });
+        } catch (err) {
+            // fallback: show error in dropdown
+            const menu = document.getElementById('sessionsDropdownMenu');
+            if (menu) menu.innerHTML = '<li class="dropdown-item text-danger">Failed to load sessions</li>';
+        }
+    }
     // Utility: Set RTL if Hebrew detected
     setDirectionForHebrew(el) {
         if (!el) return;
@@ -16,6 +49,7 @@ class ChatApp {
         this.currentModel = 'gpt-5-mini'; // Default to gpt-5-mini
         this.imageOptionsVisible = false;
         this.fileOptionsVisible = false;
+        this.refreshSessionsDropdown(); // Ensure menu is always initialized in correct style
         this.initializeEventListeners();
         this.scrollToBottom();
     }
@@ -30,14 +64,15 @@ class ChatApp {
             });
         }
 
-        // Revert session button (Sessions dropdown)
+        // Session list item click (Sessions dropdown)
         document.addEventListener('click', async (e) => {
-            const btn = e.target.closest('.revert-session-btn');
-            if (btn) {
-                const sessionId = btn.getAttribute('data-session-id');
+            const li = e.target.closest('.session-list-item');
+            if (li && li.hasAttribute('data-session-id')) {
+                const sessionId = li.getAttribute('data-session-id');
                 if (!sessionId) return;
+                let loadingModal = null;
                 try {
-                    const loadingModal = this.showLoading();
+                    loadingModal = this.showLoading();
                     const resp = await fetch('/chat/sessions/revert', {
                         method: 'POST',
                         headers: {
@@ -53,10 +88,13 @@ class ChatApp {
                         window.location.reload();
                     } else {
                         this.showError(data.error || 'Failed to revert session');
+                        console.error('Revert error:', data.error);
                     }
-                    this.hideLoading(loadingModal);
                 } catch (err) {
                     this.showError('Network error. Please try again.');
+                    console.error('Network error during revert:', err);
+                } finally {
+                    if (loadingModal) this.hideLoading(loadingModal);
                 }
             }
         });
@@ -80,11 +118,28 @@ class ChatApp {
             }
         });
 
-        // Clear history button
-        const clearBtn = document.getElementById('clearHistoryBtn');
-        if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
-                this.clearHistory();
+        // New Session button
+        const newSessionBtn = document.getElementById('newSessionBtn');
+        if (newSessionBtn) {
+            newSessionBtn.addEventListener('click', async () => {
+                let loadingModal = null;
+                try {
+                    loadingModal = this.showLoading();
+                    const resp = await fetch('/chat/sessions/new', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    const data = await resp.json();
+                    if (data.success) {
+                        window.location.reload();
+                    } else {
+                        this.showError(data.error || 'Failed to create new session');
+                    }
+                } catch (err) {
+                    this.showError('Network error. Please try again.');
+                } finally {
+                    if (loadingModal) this.hideLoading(loadingModal);
+                }
             });
         }
 
@@ -550,17 +605,15 @@ class ChatApp {
         if (!confirm('Are you sure you want to clear your chat history? This cannot be undone.')) {
             return;
         }
-
         try {
             const response = await fetch('/chat/clear', {
                 method: 'POST'
             });
-
             const data = await response.json();
-
             if (data.success) {
                 document.getElementById('chatHistory').innerHTML = '';
                 this.showSuccess('Chat history cleared successfully.');
+                await this.refreshSessionsDropdown();
             } else {
                 this.showError('Failed to clear chat history.');
             }

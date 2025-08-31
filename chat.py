@@ -138,15 +138,24 @@ def load_chat_sessions(user_id):
         if os.path.exists(filename):
             with open(filename, 'r') as f:
                 data = json.load(f)
-                if isinstance(data, list) and data and isinstance(data[0], dict) and "exchanges" in data[0]:
-                    return data
                 # Migrate old flat history to a single session
+                if isinstance(data, list) and data and isinstance(data[0], dict) and "exchanges" in data[0]:
+                    # Add summary field if missing
+                    for s in data:
+                        if "summary" not in s:
+                            if s.get("exchanges") and s["exchanges"]:
+                                first_msg = s["exchanges"][0].get("user_message", "")
+                                s["summary"] = " ".join(first_msg.split()[:10]) + ("..." if len(first_msg.split()) > 10 else "")
+                            else:
+                                s["summary"] = ""
+                    return data
                 elif isinstance(data, list):
                     session = {
                         "session_id": str(uuid.uuid4()),
                         "created_at": datetime.now().isoformat(),
                         "updated_at": datetime.now().isoformat(),
-                        "exchanges": data
+                        "exchanges": data,
+                        "summary": " ".join(data[0].get("user_message", "").split()[:10]) + ("..." if len(data[0].get("user_message", "").split()) > 10 else "") if data else ""
                     }
                     return [session]
         return []
@@ -179,17 +188,10 @@ def save_chat_sessions(user_id, sessions):
         return False
 
 def get_current_session(user_id):
-    """Get the current session (last in list) or create a new one if none exists."""
+    """Get the current session (last in list) or None if none exists."""
     sessions = load_chat_sessions(user_id)
     if not sessions:
-        session = {
-            "session_id": str(uuid.uuid4()),
-            "created_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat(),
-            "exchanges": []
-        }
-        save_chat_sessions(user_id, [session])
-        return session, [session]
+        return None, []
     return sessions[-1], sessions
 
 def set_current_session(user_id, session):
@@ -217,6 +219,18 @@ def chat_page():
         return redirect(url_for('auth.login'))
     
     current_session, sessions = get_current_session(session['user_id'])
+    if current_session is None:
+        # No valid session, create a new one directly
+        new_session = {
+            "session_id": str(uuid.uuid4()),
+            "created_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "exchanges": [],
+            "summary": ""
+        }
+        sessions.append(new_session)
+        save_chat_sessions(session['user_id'], sessions)
+        current_session = new_session
     history = current_session["exchanges"]
     
     # Process any existing history entries that don't have HTML processed responses
@@ -250,6 +264,17 @@ def send_message():
         # Load current session and all sessions
         current_session, sessions = get_current_session(session['user_id'])
 
+        # If no session exists or last session has exchanges, create a new session
+        if not current_session or (current_session and current_session.get("exchanges")):
+            current_session = {
+                "session_id": str(uuid.uuid4()),
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat(),
+                "exchanges": [],
+                "summary": ""
+            }
+            sessions.append(current_session)
+
         # Check for long inactivity (more than 10 minutes since last message)
         exchanges = current_session["exchanges"]
         if exchanges:
@@ -266,7 +291,8 @@ def send_message():
                             "session_id": str(uuid.uuid4()),
                             "created_at": datetime.now().isoformat(),
                             "updated_at": datetime.now().isoformat(),
-                            "exchanges": []
+                            "exchanges": [],
+                            "summary": ""
                         }
                         sessions.append(current_session)
                         save_chat_sessions(session['user_id'], sessions)
@@ -424,6 +450,10 @@ def send_message():
         # Append to current session
         current_session["exchanges"].append(chat_entry)
         current_session["updated_at"] = datetime.now().isoformat()
+        # Set summary if this is the first message in the session
+        if len(current_session["exchanges"]) == 1:
+            first_msg = chat_entry['user_message']
+            current_session["summary"] = " ".join(first_msg.split()[:10]) + ("..." if len(first_msg.split()) > 10 else "")
         # Save sessions (move current to end)
         set_current_session(session['user_id'], current_session)
 
@@ -678,15 +708,18 @@ def list_sessions():
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
     sessions = load_chat_sessions(session['user_id'])
-    # Return metadata only
+    # Only return sessions with at least one exchange
+    filtered_sessions = [s for s in sessions if s.get("exchanges")]
+    # Return metadata only, including summary
     session_list = [
         {
             "session_id": s["session_id"],
             "created_at": s["created_at"],
             "updated_at": s.get("updated_at", s["created_at"]),
-            "num_exchanges": len(s.get("exchanges", []))
+            "num_exchanges": len(s.get("exchanges", [])),
+            "summary": s.get("summary", "")
         }
-        for s in sessions
+        for s in filtered_sessions
     ]
     return jsonify(session_list)
 
