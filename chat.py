@@ -156,7 +156,7 @@ def load_chat_sessions(user_id):
 
 def save_chat_sessions(user_id, sessions):
     """Save user's chat sessions (keep only last 10 sessions)"""
-    filename = f'chat_history_{user_id}.json'
+    filename = f'/tmp/chat_history_{user_id}.json'
     try:
         # Clean up files from entries that will be removed (from dropped sessions)
         if len(sessions) > 10:
@@ -164,7 +164,7 @@ def save_chat_sessions(user_id, sessions):
             for session in sessions_to_remove:
                 for entry in session.get("exchanges", []):
                     if entry.get('has_file') and entry.get('file_name'):
-                        for file_path in glob.glob(f"uploads/{user_id}_*_{entry['file_name']}"):
+                        for file_path in glob.glob(f"tmp/uploads/{user_id}_*_{entry['file_name']}"):
                             try:
                                 os.remove(file_path)
                                 logging.info(f"Cleaned up file: {file_path}")
@@ -311,9 +311,9 @@ def send_message():
                 if '.' in original_filename and '.' not in safe_filename:
                     file_ext = original_filename.rsplit('.', 1)[1].lower()
                     safe_filename = f"{safe_filename}.{file_ext}"
-                os.makedirs('uploads', exist_ok=True)
+                os.makedirs('/tmp/uploads', exist_ok=True)
                 timestamp = int(datetime.now().timestamp())
-                filepath = os.path.join('uploads', f"{session['user_id']}_{timestamp}_{safe_filename}")
+                filepath = os.path.join('/tmp/uploads', f"{session['user_id']}_{timestamp}_{safe_filename}")
                 file.save(filepath)
                 uploaded_file = filepath
                 filename = safe_filename
@@ -525,7 +525,7 @@ The content should be ready to save directly as a .{file_type} file.
             return jsonify({'error': 'Failed to generate file content'}), 500
         
         # Create generated files directory
-        generated_dir = 'generated_files'
+        generated_dir = '/tmp/generated_files'
         os.makedirs(generated_dir, exist_ok=True)
         
         # Save file with timestamp to avoid conflicts
