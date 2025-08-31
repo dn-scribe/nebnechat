@@ -642,36 +642,56 @@ def generate_image():
         
         # Generate image using selected model
         response = get_openai_client().images.generate(**api_params)
-        
         if not response or not response.data or len(response.data) == 0:
             return jsonify({'error': 'Failed to generate image'}), 500
-            
         image_url = response.data[0].url
-        
+
+        # Download the image and save locally
+        import requests
+        from urllib.parse import urlparse
+        local_dir = '/tmp/downloaded'
+        os.makedirs(local_dir, exist_ok=True)
+        # Use timestamp and user_id for unique filename
+        timestamp = int(datetime.now().timestamp())
+        ext = image_url.split('.')[-1].split('?')[0]
+        if ext.lower() not in ['png', 'jpg', 'jpeg', 'webp', 'gif']:
+            ext = 'png'
+        local_filename = f"{session['user_id']}_{timestamp}.{ext}"
+        local_path = os.path.join(local_dir, local_filename)
+        try:
+            img_resp = requests.get(image_url)
+            img_resp.raise_for_status()
+            with open(local_path, 'wb') as f:
+                f.write(img_resp.content)
+        except Exception as e:
+            logging.error(f"Error downloading generated image: {e}")
+            return jsonify({'error': 'Failed to download generated image'}), 500
+
         # Create model display name with settings
         model_display = f"{model_config['name']} ({image_size}"
         if image_model == 'dall-e-3' and image_quality == 'hd':
             model_display += f", {image_quality.upper()}"
         model_display += ")"
-        
+
         # Save to chat history
         chat_entry = {
             'timestamp': datetime.now().isoformat(),
             'model': model_display,
             'user_message': f"Generate image: {prompt}",
             'ai_response': f"Generated image using {model_display}",
-            'image_url': image_url,
-            'has_file': False
+            'image_url': f"/chat/download-image/{local_filename}",
+            'has_file': True,
+            'file_name': local_filename
         }
-        
+
         current_session, _ = get_current_session(session['user_id'])
         history = current_session["exchanges"]
         history.append(chat_entry)
         set_current_session(session['user_id'], current_session)
-        
+
         return jsonify({
             'success': True,
-            'image_url': image_url,
+            'image_url': f"/chat/download-image/{local_filename}",
             'timestamp': chat_entry['timestamp'],
             'model': model_display
         })
@@ -755,29 +775,36 @@ def new_session():
     save_chat_sessions(session['user_id'], sessions)
     return jsonify({'success': True, 'session_id': new_session["session_id"]})
 
-@chat_bp.route('/chat/download-image/<path:image_path>')
-def download_image(image_path):
-    """Endpoint to properly download generated images"""
+@chat_bp.route('/chat/download-image/<filename>')
+def download_image(filename):
+    """Endpoint to properly download generated images from /tmp/downloaded"""
     if 'user_id' not in session:
         return jsonify({'error': 'Not authenticated'}), 401
-    
     try:
-        # Security check - ensure the image path is safe and belongs to user
-        if not image_path.startswith('static/images/'):
-            return jsonify({'error': 'Invalid image path'}), 400
-        
-        # Check if file exists
-        if not os.path.exists(image_path):
+        # Only allow files from /tmp/downloaded and matching user_id
+        local_dir = '/tmp/downloaded'
+        if not filename or '..' in filename or '/' in filename:
+            return jsonify({'error': 'Invalid filename'}), 400
+        # Optionally, check user_id in filename
+        if not filename.startswith(f"{session['user_id']}_"):
+            return jsonify({'error': 'Access denied'}), 403
+        file_path = os.path.join(local_dir, filename)
+        if not os.path.exists(file_path):
             return jsonify({'error': 'Image not found'}), 404
-        
-        # Extract filename for download
-        filename = os.path.basename(image_path)
-        
+        # Guess mimetype
+        ext = filename.split('.')[-1].lower()
+        mimetype = 'image/png'
+        if ext in ['jpg', 'jpeg']:
+            mimetype = 'image/jpeg'
+        elif ext == 'gif':
+            mimetype = 'image/gif'
+        elif ext == 'webp':
+            mimetype = 'image/webp'
         return send_file(
-            image_path,
+            file_path,
             as_attachment=True,
             download_name=filename,
-            mimetype='image/png'
+            mimetype=mimetype
         )
     except Exception as e:
         logging.error(f"Error downloading image: {e}")
