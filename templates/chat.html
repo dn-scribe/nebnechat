@@ -81,7 +81,7 @@
                         <div class="message-content">
                             {% if entry.image_url %}
                             <img src="{{ entry.image_url }}" class="img-fluid generated-image" alt="Generated image">
-                            <a href="{{ url_for('chat.download_image', image_path=entry.image_url) }}" class="btn btn-sm btn-outline-success mt-2">
+                            <a href="{{ entry.image_url }}" class="btn btn-sm btn-outline-success mt-2">
                                 <i class="fas fa-download"></i> Download Image
                             </a>
                             {% else %}
