@@ -54,9 +54,19 @@ def login():
         if username in users:
             logging.debug(f"User '{username}' found. Verifying password...")
             if verify_password(password, users[username]['password']):
+                # Set session data
+                session.clear()  # Clear any existing session data
                 session['user_id'] = username
                 session['is_admin'] = users[username].get('is_admin', False)
-                logging.debug(f"Login successful for user '{username}'. Session set.")
+                session.permanent = True  # Make sure the session is permanent
+                session.modified = True  # Explicitly mark session as modified
+                
+                # Debug logging
+                logging.debug(f"Login successful for user '{username}'")
+                logging.debug(f"Session set with keys: {list(session.keys())}")
+                logging.debug(f"Session data: {dict(session)}")
+                logging.debug(f"Request headers: {dict(request.headers)}")
+                
                 flash(f'Welcome back, {username}!', 'success')
                 return redirect(url_for('chat.chat_page'))
             else:
