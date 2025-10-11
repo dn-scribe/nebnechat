@@ -135,6 +135,9 @@ def load_chat_sessions(user_id):
     """Load user's chat sessions (list of sessions, each a dict with metadata and exchanges)"""
     filename = f'/tmp/chat_history_{user_id}.json'
     try:
+        # Ensure parent directory exists
+        os.makedirs('/tmp', exist_ok=True)
+        
         if os.path.exists(filename):
             with open(filename, 'r') as f:
                 data = json.load(f)
@@ -167,6 +170,9 @@ def save_chat_sessions(user_id, sessions):
     """Save user's chat sessions (keep only last 10 sessions) and delete OpenAI vector store if session is deleted"""
     filename = f'/tmp/chat_history_{user_id}.json'
     try:
+        # Ensure parent directory exists
+        os.makedirs('/tmp', exist_ok=True)
+        
         # Clean up files from entries that will be removed (from dropped sessions)
         if len(sessions) > 10:
             sessions_to_remove = sessions[:-10]
@@ -182,7 +188,7 @@ def save_chat_sessions(user_id, sessions):
                         logging.error(f"Error deleting OpenAI vector store {vector_store_id}: {e}")
                 for entry in session.get("exchanges", []):
                     if entry.get('has_file') and entry.get('file_name'):
-                        for file_path in glob.glob(f"tmp/uploads/{user_id}_*_{entry['file_name']}"):
+                        for file_path in glob.glob(f"/tmp/uploads/{user_id}_*_{entry['file_name']}"):
                             try:
                                 os.remove(file_path)
                                 logging.info(f"Cleaned up file: {file_path}")
@@ -226,6 +232,9 @@ def encode_image(image_path):
 def chat_page():
     if 'user_id' not in session:
         return redirect(url_for('auth.login'))
+    
+    # Log basic session data for debugging
+    logging.debug(f"Chat page access - user_id: {session['user_id']}")
     
     current_session, sessions = get_current_session(session['user_id'])
     if current_session is None:
@@ -361,7 +370,14 @@ def send_message():
                 if '.' in original_filename and '.' not in safe_filename:
                     file_ext = original_filename.rsplit('.', 1)[1].lower()
                     safe_filename = f"{safe_filename}.{file_ext}"
+                # Ensure directory exists with proper permissions
                 os.makedirs('/tmp/uploads', exist_ok=True)
+                try:
+                    # Try to ensure directory is writable
+                    if not os.access('/tmp/uploads', os.W_OK):
+                        os.chmod('/tmp/uploads', 0o777)
+                except Exception as e:
+                    logging.error(f"Error setting permissions on /tmp/uploads: {e}")
                 timestamp = int(datetime.now().timestamp())
                 filepath = os.path.join('/tmp/uploads', f"{user_id}_{timestamp}_{safe_filename}")
                 file.save(filepath)
@@ -572,6 +588,12 @@ The content should be ready to save directly as a .{file_type} file.
         # Create generated files directory (now /tmp/downloaded)
         generated_dir = '/tmp/downloaded'
         os.makedirs(generated_dir, exist_ok=True)
+        try:
+            # Try to ensure directory is writable
+            if not os.access(generated_dir, os.W_OK):
+                os.chmod(generated_dir, 0o777)
+        except Exception as e:
+            logging.error(f"Error setting permissions on {generated_dir}: {e}")
 
         # Save file with timestamp to avoid conflicts
         timestamp = int(datetime.now().timestamp())

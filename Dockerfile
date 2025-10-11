@@ -11,6 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Create required temp directories with proper permissions
+RUN mkdir -p /tmp/uploads /tmp/downloaded && \
+    chmod -R 777 /tmp/uploads /tmp/downloaded
+
 # Copy project files
 COPY . /app
 

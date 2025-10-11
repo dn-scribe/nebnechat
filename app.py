@@ -11,9 +11,10 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SESSION_SECRET", "dev-secret-key-change-in-production")
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
-# Set secure session cookie settings for Hugging Face Spaces and proxies
-app.config['SESSION_COOKIE_SAMESITE'] = 'None'
-app.config['SESSION_COOKIE_SECURE'] = True  # Set to False for local development (True for HTTPS)
+# Session cookie settings - Use more permissive settings to ensure cookies work in all environments
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'  # Less restrictive
+app.config['SESSION_COOKIE_SECURE'] = False    # Allow HTTP
+app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 # Configure upload settings
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
