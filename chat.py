@@ -233,9 +233,20 @@ def chat_page():
     # Enhanced debugging for session issues
     logging.debug(f"Chat page accessed with session keys: {list(session.keys())}")
     logging.debug(f"Request cookies: {request.cookies}")
+    logging.debug(f"User agent: {request.headers.get('User-Agent', '')}")
     
+    # Check if user is in session
     if 'user_id' not in session:
-        logging.warning("No user_id found in session, redirecting to login")
+        # Special handling for potential mobile/iframe cookie issues
+        user_agent = request.headers.get('User-Agent', '').lower()
+        is_mobile = 'iphone' in user_agent or 'android' in user_agent or 'mobile' in user_agent
+        
+        if is_mobile and not request.cookies:
+            logging.warning(f"Mobile client detected without cookies: {user_agent}")
+            flash("Your browser isn't saving cookies properly. Try opening this page directly (not in an iframe).", 'warning')
+        else:
+            logging.warning("No user_id found in session, redirecting to login")
+        
         return redirect(url_for('auth.login'))
     
     # Log basic session data for debugging

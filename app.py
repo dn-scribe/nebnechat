@@ -16,30 +16,25 @@ app = Flask(__name__)
 app.secret_key = "veryHardToGuessStaticSecretKeyForNebenChat_1234!@#$"
 
 # Configure the app to work properly with Hugging Face Spaces reverse proxies
-app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+# x_for=1: trust X-Forwarded-For header
+# x_proto=1: trust X-Forwarded-Proto header
+# x_host=1: trust X-Forwarded-Host header
+# x_prefix=1: trust X-Forwarded-Prefix header
+# x_port=1: trust X-Forwarded-Port header
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1, x_port=1)
 
-# Hugging Face Spaces specific configuration
+# Force HTTPS scheme for URL generation
 app.config['PREFERRED_URL_SCHEME'] = 'https'  # HF Spaces uses HTTPS
 
-# Session configuration based on environment
-if HF_SPACE:
-    # Hugging Face Spaces specific session settings
-    app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Required for iframe embedding in Spaces
-    app.config['SESSION_COOKIE_SECURE'] = True      # Required for SameSite=None to work
-    # In HF Spaces, we need to allow specific domain cookies
-    space_name = os.environ.get('SPACE_ID', '').replace('/', '-')
-    if space_name:
-        app.config['SESSION_COOKIE_DOMAIN'] = f"{space_name}.hf.space"
-        logging.debug(f"Setting cookie domain to: {app.config['SESSION_COOKIE_DOMAIN']}")
-else:
-    # Local/non-HF environment
-    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'   # Default for regular websites
-    app.config['SESSION_COOKIE_SECURE'] = False     # Allow HTTP for local development
-
-# Common session settings
+# Session configuration for Hugging Face Spaces
+# The key issue is that we must NOT set SESSION_COOKIE_DOMAIN and use default path
+app.config['SESSION_COOKIE_SAMESITE'] = None    # Allow cookies in iframes (None, not 'None' string)
+app.config['SESSION_COOKIE_SECURE'] = False     # Allow both HTTP and HTTPS 
 app.config['SESSION_COOKIE_HTTPONLY'] = True    # Protect against XSS
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours in seconds
-app.config['SESSION_COOKIE_NAME'] = 'nebenchat_session'  # Fixed cookie name
+app.config['SESSION_COOKIE_PATH'] = '/'         # Valid for all paths
+app.config['SESSION_COOKIE_DOMAIN'] = None      # Don't restrict to specific domain
+app.config['SESSION_COOKIE_NAME'] = 'session'   # Use Flask's default cookie name
 
 # Enable session permanence by default
 @app.before_request
@@ -64,6 +59,7 @@ app.register_blueprint(chat_bp)
 
 @app.route('/')
 def index():
+    # Check for user in session
     if 'user_id' in session:
         return redirect(url_for('chat.chat_page'))
     return redirect(url_for('auth.login'))

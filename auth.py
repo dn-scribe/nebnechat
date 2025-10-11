@@ -54,7 +54,7 @@ def login():
         if username in users:
             logging.debug(f"User '{username}' found. Verifying password...")
             if verify_password(password, users[username]['password']):
-                # Set session data
+                # Set session data with explicit cookie settings
                 session.clear()  # Clear any existing session data
                 session['user_id'] = username
                 session['is_admin'] = users[username].get('is_admin', False)
