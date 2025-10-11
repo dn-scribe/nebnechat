@@ -230,7 +230,12 @@ def encode_image(image_path):
 
 @chat_bp.route('/chat')
 def chat_page():
+    # Enhanced debugging for session issues
+    logging.debug(f"Chat page accessed with session keys: {list(session.keys())}")
+    logging.debug(f"Request cookies: {request.cookies}")
+    
     if 'user_id' not in session:
+        logging.warning("No user_id found in session, redirecting to login")
         return redirect(url_for('auth.login'))
     
     # Log basic session data for debugging
