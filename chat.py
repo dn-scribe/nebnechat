@@ -234,20 +234,29 @@ def chat_page():
     logging.debug(f"Chat page accessed with session keys: {list(session.keys())}")
     logging.debug(f"Request cookies: {request.cookies}")
     logging.debug(f"User agent: {request.headers.get('User-Agent', '')}")
+    logging.debug(f"Request headers: {dict(request.headers)}")
     
     # Check if user is authenticated either in session or in cookies
     if 'user_id' not in session:
         # Emergency fallback: try to get user from cookies directly
         user_from_cookie = None
         
-        # Check cookie for user information
+        # Check cookie for user information - more thorough check
         for cookie_name in ['session', 'nebenchat_session']:
+            if cookie_name not in request.cookies:
+                continue
+                
             cookie_value = request.cookies.get(cookie_name, '')
-            if 'neben' in cookie_value:
-                user_from_cookie = 'neben'
-                break
-            elif 'danny' in cookie_value:
-                user_from_cookie = 'danny'
+            logging.debug(f"Checking {cookie_name} cookie for user info: {cookie_value[:20]}...")
+            
+            # Try to find any known username in the cookie
+            for username in ['neben', 'danny']:
+                if username in cookie_value:
+                    user_from_cookie = username
+                    logging.info(f"Found username '{username}' in {cookie_name} cookie")
+                    break
+            
+            if user_from_cookie:
                 break
         
         # If we found a user in the cookie, recreate the session
@@ -257,16 +266,30 @@ def chat_page():
             session['is_admin'] = user_from_cookie == 'danny'
             session.permanent = True
             session.modified = True
+            
+            # Log the updated session for debugging
+            logging.debug(f"Session after recovery: {dict(session)}")
+            
+            # Force a cookie re-issue
+            response = redirect(url_for('chat.chat_page'))
+            response.set_cookie('session', value=request.cookies.get('session'), 
+                              samesite='None', secure=True, httponly=True, path='/')
+            return response
         else:
             # No user found in session or cookies
             user_agent = request.headers.get('User-Agent', '').lower()
             is_mobile = 'iphone' in user_agent or 'android' in user_agent or 'mobile' in user_agent
             
+            # Check if user might be experiencing cookie issues
+            cookie_issue_msg = "Having trouble staying logged in? <a href='/cookie-guide'>Click here for help</a>."
+            
             if is_mobile and not request.cookies:
                 logging.warning(f"Mobile client detected without cookies: {user_agent}")
                 flash("Your browser isn't saving cookies properly. Try opening this page directly (not in an iframe).", 'warning')
+                flash(cookie_issue_msg, 'info')
             else:
                 logging.warning("No user_id found in session or cookies, redirecting to login")
+                flash(cookie_issue_msg, 'info')
             
             return redirect(url_for('auth.login'))
     
