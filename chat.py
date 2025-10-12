@@ -241,23 +241,28 @@ def chat_page():
         # Emergency fallback: try to get user from cookies directly
         user_from_cookie = None
         
-        # Check cookie for user information - more thorough check
-        for cookie_name in ['session', 'nebenchat_session']:
-            if cookie_name not in request.cookies:
-                continue
+        # First check for our explicit user_token cookie
+        if 'user_token' in request.cookies:
+            user_from_cookie = request.cookies.get('user_token')
+            logging.info(f"Found username '{user_from_cookie}' in user_token cookie")
+        else:
+            # Fall back to checking session cookies
+            for cookie_name in ['session', 'nebenchat_session']:
+                if cookie_name not in request.cookies:
+                    continue
+                    
+                cookie_value = request.cookies.get(cookie_name, '')
+                logging.debug(f"Checking {cookie_name} cookie for user info: {cookie_value[:20]}...")
                 
-            cookie_value = request.cookies.get(cookie_name, '')
-            logging.debug(f"Checking {cookie_name} cookie for user info: {cookie_value[:20]}...")
-            
-            # Try to find any known username in the cookie
-            for username in ['neben', 'danny']:
-                if username in cookie_value:
-                    user_from_cookie = username
-                    logging.info(f"Found username '{username}' in {cookie_name} cookie")
+                # Try to find any known username in the cookie
+                for username in ['neben', 'danny']:
+                    if username in cookie_value:
+                        user_from_cookie = username
+                        logging.info(f"Found username '{username}' in {cookie_name} cookie")
+                        break
+                
+                if user_from_cookie:
                     break
-            
-            if user_from_cookie:
-                break
         
         # If we found a user in the cookie, recreate the session
         if user_from_cookie:

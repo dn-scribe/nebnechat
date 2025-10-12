@@ -57,10 +57,22 @@ def handle_session():
     # If user_id not in session, try to recover from any cookie
     if 'user_id' not in session:
         try:
-            # First try the standard session cookie
-            for cookie_name in ['session', 'nebenchat_session']:
-                if cookie_name in request.cookies:
+            # First check our explicitly set user_token cookie - this is most reliable
+            if 'user_token' in request.cookies:
+                username = request.cookies.get('user_token')
+                logging.info(f"Recovering session from user_token cookie: {username}")
+                session['user_id'] = username
+                session['is_admin'] = (username == 'danny')
+                session.modified = True
+                logging.debug(f"Recovered user_id '{username}' from user_token")
+            else:
+                # Fall back to standard session cookies
+                for cookie_name in ['session', 'nebenchat_session']:
+                    if cookie_name not in request.cookies:
+                        continue
+                    
                     cookie_value = request.cookies.get(cookie_name, '')
+                    logging.debug(f"Examining {cookie_name} cookie: {cookie_value[:30]}...")
                     
                     # Check if cookie contains known usernames
                     for username in ['neben', 'danny']:
@@ -118,25 +130,64 @@ def debug_session():
     """Debug endpoint to check session data"""
     # Try to recover the user from cookies for debugging
     user_from_cookie = None
-    for cookie_name in ['session', 'nebenchat_session']:
-        cookie_value = request.cookies.get(cookie_name, '')
-        if 'neben' in cookie_value:
-            user_from_cookie = 'neben'
-            break
-        elif 'danny' in cookie_value:
-            user_from_cookie = 'danny'
-            break
+    
+    # Check each cookie type
+    cookie_data = {}
+    for cookie_name in ['session', 'nebenchat_session', 'user_token']:
+        if cookie_name in request.cookies:
+            cookie_value = request.cookies.get(cookie_name, '')
+            cookie_data[cookie_name] = {
+                'value_prefix': cookie_value[:30] + '...' if len(cookie_value) > 30 else cookie_value,
+                'length': len(cookie_value)
+            }
+            
+            # Check for usernames in cookie
+            if 'neben' in cookie_value:
+                user_from_cookie = 'neben'
+                cookie_data[cookie_name]['contains_user'] = 'neben'
+            elif 'danny' in cookie_value:
+                user_from_cookie = 'danny'
+                cookie_data[cookie_name]['contains_user'] = 'danny'
+    
+    # Check browser environment
+    headers = dict(request.headers)
+    is_iframe = headers.get('Sec-Fetch-Dest') == 'iframe'
+    browser_info = {
+        'is_iframe': is_iframe,
+        'sec_fetch_dest': headers.get('Sec-Fetch-Dest'),
+        'sec_fetch_site': headers.get('Sec-Fetch-Site'),
+        'sec_fetch_mode': headers.get('Sec-Fetch-Mode'),
+        'sec_fetch_user': headers.get('Sec-Fetch-User'),
+        'user_agent': headers.get('User-Agent'),
+    }
     
     output = {
         'session_keys': list(session.keys() if session else []),
         'session_data': dict(session) if session else {},
-        'user_from_cookie': user_from_cookie,
         'cookies': {k: v[:20] + '...' for k, v in request.cookies.items()},
-        'headers': dict(request.headers),
+        'detailed_cookie_info': cookie_data,
+        'user_from_cookie': user_from_cookie,
+        'browser_environment': browser_info,
+        'headers': headers,
         'environ': {k: str(v) for k, v in request.environ.items() if k.startswith('HTTP_') or k.startswith('REMOTE_') or k.startswith('SERVER_')},
         'app_config': {k: str(v) for k, v in app.config.items() if 'SECRET' not in k.upper()}
     }
-    return render_template('base.html', content=f'<pre>{json.dumps(output, indent=2)}</pre>')
+    
+    # Add action buttons
+    html_content = f"""
+    <div class="mb-4">
+        <h3>Session Debug</h3>
+        <div class="d-flex gap-2 mb-3">
+            <a href="/login" class="btn btn-primary">Go to Login</a>
+            <a href="/cookie-guide" class="btn btn-info">Cookie Guide</a>
+            <a href="/open-direct" class="btn btn-success">Open Directly</a>
+            <a href="/debug-session" class="btn btn-secondary">Refresh Debug Info</a>
+        </div>
+    </div>
+    <pre>{json.dumps(output, indent=2)}</pre>
+    """
+    
+    return render_template('base.html', content=html_content)
 
 @app.route('/login-status')
 def login_status():
@@ -187,7 +238,39 @@ def cookie_guide():
     <p>Hugging Face Spaces runs apps in iframes, which can trigger strict cookie policies in modern browsers, 
     especially on mobile devices. This is a security feature of browsers, but it can interfere with web 
     applications that need to maintain login sessions.</p>
+    
+    <h2>Direct Access Links</h2>
+    <p>Try accessing the app directly via these links instead of through the iframe:</p>
+    <ul>
+        <li><a href="https://dn-9281411-nebenchat.hf.space/login" target="_blank">Login Page (Direct)</a></li>
+        <li><a href="https://dn-9281411-nebenchat.hf.space/chat" target="_blank">Chat Page (Direct)</a></li>
+    </ul>
     """
+    
+    # Check if we're likely in an iframe
+    is_iframe = request.headers.get('Sec-Fetch-Dest') == 'iframe'
+    if is_iframe:
+        html_content += """
+        <div class="alert alert-warning mt-3">
+            <strong>You appear to be viewing this page in an iframe.</strong> 
+            Try clicking one of the direct access links above to open the app in a new tab,
+            which may resolve cookie-related login issues.
+        </div>
+        """
     
     return render_template('base.html', 
                           content=f'<div class="container mt-4">{html_content}</div>')
+
+@app.route('/open-direct')
+def open_direct():
+    """Provide a simple page to open the app directly"""
+    html_content = """
+    <div class="text-center">
+        <h1 class="mb-4">NebenChat - Open Directly</h1>
+        <p class="mb-4">Click the button below to open NebenChat in a direct browser tab:</p>
+        <a href="https://dn-9281411-nebenchat.hf.space/login" target="_blank" class="btn btn-primary btn-lg">
+            Open NebenChat
+        </a>
+    </div>
+    """
+    return render_template('base.html', content=html_content)
