@@ -50,58 +50,12 @@
 {% block scripts %}
 <script>
     document.addEventListener('DOMContentLoaded', function() {
-        // Detect if we're in an iframe with storage restrictions
-        const isIframe = window.self !== window.top;
-        const userAgent = navigator.userAgent;
-        const isChrome = userAgent.indexOf('Chrome') > -1 || userAgent.indexOf('Chromium') > -1;
-        
-        // Check if cookies are enabled
-        function areCookiesEnabled() {
-            try {
-                document.cookie = "testcookie=1; SameSite=Lax; path=/";
-                const cookiesEnabled = document.cookie.indexOf("testcookie") !== -1;
-                document.cookie = "testcookie=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-                return cookiesEnabled;
-            } catch(e) {
-                return false;
-            }
-        }
-        
-        // Show warning if needed
-        if (isIframe && isChrome) {
-            const warningDiv = document.createElement('div');
-            warningDiv.className = 'alert alert-warning mt-3';
-            warningDiv.innerHTML = `
-                <strong>Cookie storage may be blocked in this iframe.</strong>
-                <p>If you have trouble staying logged in, please 
-                   <a href="/open-direct" target="_blank" class="alert-link">open NebenChat directly</a> in a new tab.</p>
-                <p>Or use the quick links below:</p>
-                <div class="mt-2">
-                    <a href="/direct-login/neben" target="_blank" class="btn btn-sm btn-outline-dark me-2">Open as neben</a>
-                    <a href="/direct-login/danny" target="_blank" class="btn btn-sm btn-outline-dark">Open as danny</a>
-                </div>
-            `;
-            
-            // Add after the card
-            const cardElement = document.querySelector('.card');
-            if (cardElement && cardElement.parentNode) {
-                cardElement.parentNode.insertBefore(warningDiv, cardElement.nextSibling);
-            }
-        }
-        
-        // Add event listener for the login form
         const loginForm = document.querySelector('form[method="POST"]');
         if (loginForm) {
             loginForm.addEventListener('submit', function(e) {
                 const username = document.getElementById('username').value;
                 // Do not log password for security
                 console.log('[Login Debug] Form submitted. Username:', username);
-                
-                // Check if cookies are enabled
-                if (!areCookiesEnabled()) {
-                    console.warn('[Login Debug] Cookies appear to be disabled');
-                    alert('Warning: Cookies appear to be disabled in your browser. Login may not work properly.');
-                }
             });
             console.log('[Login Debug] Login form event listener attached.');
         } else {

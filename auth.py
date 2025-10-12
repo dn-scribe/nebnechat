@@ -72,70 +72,24 @@ def login():
                 # Create response with redirect and set cookies explicitly
                 response = redirect(url_for('chat.chat_page'))
                 
-                # Check if this is an iframe with storage access restrictions
+                # Check if this is likely an iframe context based on headers
                 is_iframe = request.headers.get('Sec-Fetch-Dest') == 'iframe'
-                storage_access_none = request.headers.get('Sec-Fetch-Storage-Access') == 'none'
                 
-                # Get user agent for better debugging
-                user_agent = request.headers.get('User-Agent', '')
-                is_chrome = 'Chrome' in user_agent or 'Chromium' in user_agent
+                # Set SameSite based on context
+                samesite = 'None' if is_iframe else 'Lax'
                 
-                # Log the browser environment for debugging
-                logging.debug(f"Browser environment: iframe={is_iframe}, storage_access_none={storage_access_none}, is_chrome={is_chrome}")
+                # Set cookies explicitly with the appropriate settings
+                response.set_cookie(
+                    'user_token', 
+                    value=username,  # Simple non-secure user identifier for recovery
+                    max_age=86400,   # 24 hours
+                    path='/',
+                    secure=True,    # Always secure for HTTPS
+                    httponly=True,  # Protect against XSS
+                    samesite=samesite  # Adaptive based on context
+                )
                 
-                # Try multiple cookie approaches to maximize compatibility
-                # 1. Standard session cookie (already set by Flask)
-                # 2. Our custom recovery cookie with varied settings
-                
-                if is_iframe and storage_access_none and is_chrome:
-                    # Modern Chrome in iframe with storage restrictions - session may not persist
-                    # We'll use this knowledge to show a specific message on the next page
-                    flash('Your browser may block cookies in this iframe. Try opening directly in a new tab.', 'warning')
-                    
-                    # Set a cookie with Lax policy (more likely to be accepted)
-                    response.set_cookie(
-                        'user_token', 
-                        value=username,
-                        max_age=86400,
-                        path='/',
-                        secure=True,
-                        httponly=True,
-                        samesite='Lax'
-                    )
-                    
-                    # Also try with a domain-specific cookie
-                    host = request.headers.get('Host', '')
-                    if host and '.' in host:
-                        response.set_cookie(
-                            'user_token_domain',
-                            value=username,
-                            max_age=86400,
-                            domain=host.split(':', 1)[0],  # Remove port if present
-                            path='/',
-                            secure=True,
-                            httponly=True,
-                            samesite='Lax'
-                        )
-                    
-                    # Add direct access URL to the response
-                    response.headers['X-Direct-Access-Url'] = f"https://{host}/chat"
-                    
-                    logging.debug(f"Chrome iframe detection: Set fallback cookies and direct access header")
-                else:
-                    # Standard approach for other browsers
-                    samesite = 'None' if is_iframe else 'Lax'
-                    
-                    response.set_cookie(
-                        'user_token', 
-                        value=username,
-                        max_age=86400,
-                        path='/',
-                        secure=True,
-                        httponly=True,
-                        samesite=samesite
-                    )
-                    
-                    logging.debug(f"Set explicit cookie with SameSite={samesite}")
+                logging.debug(f"Set explicit cookie with SameSite={samesite}")
                 
                 return response
             else:

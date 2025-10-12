@@ -236,63 +236,22 @@ def chat_page():
     logging.debug(f"User agent: {request.headers.get('User-Agent', '')}")
     logging.debug(f"Request headers: {dict(request.headers)}")
     
-    # Detect iframe with storage access restrictions
-    is_iframe = request.headers.get('Sec-Fetch-Dest') == 'iframe'
-    storage_access_none = request.headers.get('Sec-Fetch-Storage-Access') == 'none'
-    user_agent = request.headers.get('User-Agent', '')
-    is_chrome = 'Chrome' in user_agent or 'Chromium' in user_agent
-    
-    # Special handling for modern Chrome in iframe with storage restrictions
-    if is_iframe and storage_access_none and is_chrome and not request.cookies:
-        host = request.headers.get('Host', '')
-        direct_url = f"https://{host}/chat"
-        
-        # Return a special page with iframe cookie issue message
-        html_content = f"""
-        <div class="container text-center">
-            <h2 class="my-4">Cookie Storage Access Issue Detected</h2>
-            <div class="alert alert-warning">
-                <p>Your browser (Chrome/Chromium) is blocking cookies in this iframe due to privacy restrictions.</p>
-                <p>This prevents our chat application from maintaining your login session.</p>
-            </div>
-            <div class="my-4">
-                <p>To use NebenChat, please click the button below to open it in a new tab:</p>
-                <a href="{direct_url}" target="_blank" class="btn btn-primary btn-lg">
-                    Open NebenChat in New Tab
-                </a>
-            </div>
-            <div class="mt-5 card">
-                <div class="card-header">Why is this happening?</div>
-                <div class="card-body">
-                    <p>Chrome and other modern browsers restrict cookie access in iframes for security reasons.</p>
-                    <p>When a website (like Hugging Face Spaces) embeds an application in an iframe, 
-                       browsers may block third-party cookies to prevent tracking.</p>
-                    <p>Opening the app directly in a new tab avoids these restrictions.</p>
-                </div>
-            </div>
-        </div>
-        """
-        return render_template('base.html', content=html_content)
-    
     # Check if user is authenticated either in session or in cookies
     if 'user_id' not in session:
         # Emergency fallback: try to get user from cookies directly
         user_from_cookie = None
         
-        # Check for all possible recovery cookies
-        for cookie_name in ['user_token', 'user_token_domain', 'session', 'nebenchat_session']:
-            if cookie_name not in request.cookies:
-                continue
-                
-            cookie_value = request.cookies.get(cookie_name, '')
-            
-            if cookie_name in ['user_token', 'user_token_domain']:
-                # These cookies store the username directly
-                user_from_cookie = cookie_value
-                logging.info(f"Found username '{user_from_cookie}' in {cookie_name} cookie")
-                break
-            else:
-                # Session cookies need to be parsed
+        # First check for our explicit user_token cookie
+        if 'user_token' in request.cookies:
+            user_from_cookie = request.cookies.get('user_token')
+            logging.info(f"Found username '{user_from_cookie}' in user_token cookie")
+        else:
+            # Fall back to checking session cookies
+            for cookie_name in ['session', 'nebenchat_session']:
+                if cookie_name not in request.cookies:
+                    continue
+                    
+                cookie_value = request.cookies.get(cookie_name, '')
                 logging.debug(f"Checking {cookie_name} cookie for user info: {cookie_value[:20]}...")
                 
                 # Try to find any known username in the cookie
@@ -302,8 +261,8 @@ def chat_page():
                         logging.info(f"Found username '{username}' in {cookie_name} cookie")
                         break
                 
-            if user_from_cookie:
-                break
+                if user_from_cookie:
+                    break
         
         # If we found a user in the cookie, recreate the session
         if user_from_cookie:
