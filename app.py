@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from flask import Flask, render_template, session, redirect, url_for, request, flash
+from flask import Flask, render_template, session, redirect, url_for, request
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 # Configure logging
@@ -33,12 +33,14 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1, 
 app.config['PREFERRED_URL_SCHEME'] = 'https'  # HF Spaces uses HTTPS
 
 # Critical session configuration changes for Hugging Face Spaces
-# In modern browsers, there are increasing restrictions on cookies in iframes,
-# especially with Storage Access API restrictions (Sec-Fetch-Storage-Access: none)
-app.config['SESSION_COOKIE_NAME'] = 'session'   # Use Flask's default cookie name
+# 1. Use Flask's default cookie name for compatibility
+# 2. Don't restrict by domain and use root path
+# 3. Set SameSite policy to None to ensure cookies work in iframes
+# 4. Set Secure to True since HF Spaces uses HTTPS
+app.config['SESSION_COOKIE_NAME'] = 'session'   # Use Flask's default cookie name to match existing cookies
 app.config['SESSION_COOKIE_PATH'] = '/'         # Valid for all paths
 app.config['SESSION_COOKIE_DOMAIN'] = None      # Don't restrict to specific domain
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'   # Using Lax as a more compatible default
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'  # Required for cookies in iframes
 app.config['SESSION_COOKIE_SECURE'] = True      # Use secure cookies for HTTPS
 app.config['SESSION_COOKIE_HTTPONLY'] = True    # Protect against XSS
 app.config['PERMANENT_SESSION_LIFETIME'] = 86400  # 24 hours in seconds
@@ -262,75 +264,13 @@ def cookie_guide():
 @app.route('/open-direct')
 def open_direct():
     """Provide a simple page to open the app directly"""
-    # Get the host from request headers
-    host = request.headers.get('Host', 'dn-9281411-nebenchat.hf.space')
-    direct_url = f"https://{host}/login"
-    
-    # Detect if we're in an iframe
-    is_iframe = request.headers.get('Sec-Fetch-Dest') == 'iframe'
-    storage_access_none = request.headers.get('Sec-Fetch-Storage-Access') == 'none'
-    
-    html_content = f"""
+    html_content = """
     <div class="text-center">
         <h1 class="mb-4">NebenChat - Open Directly</h1>
         <p class="mb-4">Click the button below to open NebenChat in a direct browser tab:</p>
-        <a href="{direct_url}" target="_blank" class="btn btn-primary btn-lg">
+        <a href="https://dn-9281411-nebenchat.hf.space/login" target="_blank" class="btn btn-primary btn-lg">
             Open NebenChat
         </a>
     </div>
     """
-    
-    # If we're in an iframe with storage restrictions, add more information
-    if is_iframe and storage_access_none:
-        html_content += """
-        <div class="mt-5 card">
-            <div class="card-header">Why open in a new tab?</div>
-            <div class="card-body">
-                <p>Your browser is currently restricting cookie storage in this iframe.</p>
-                <p>This means our chat application cannot maintain your login session properly.</p>
-                <p>Opening the app directly in a new tab avoids these restrictions and allows the login to work correctly.</p>
-            </div>
-        </div>
-        
-        <div class="mt-3 alert alert-info">
-            <strong>Technical Note:</strong> Modern browsers restrict third-party cookies in iframes for privacy reasons.
-            The <code>Sec-Fetch-Storage-Access: none</code> header indicates that your browser is applying these restrictions.
-        </div>
-        """
-    
     return render_template('base.html', content=html_content)
-
-@app.route('/direct-login/<username>')
-def direct_login(username):
-    """Special login endpoint for direct access"""
-    # Only allow specific usernames
-    if username not in ['neben', 'danny']:
-        flash('Invalid username specified', 'error')
-        return redirect(url_for('auth.login'))
-    
-    # Check if this is a direct access scenario
-    referer = request.headers.get('Referer', '')
-    if 'huggingface.co' not in referer and 'hf.space' not in referer:
-        flash('This endpoint is only for direct access from Hugging Face Spaces', 'error')
-        return redirect(url_for('auth.login'))
-        
-    # Set up session
-    session['user_id'] = username
-    session['is_admin'] = (username == 'danny')
-    session.permanent = True
-    session.modified = True
-    
-    # Set a direct cookie as well
-    response = redirect(url_for('chat.chat_page'))
-    response.set_cookie(
-        'user_token', 
-        value=username,
-        max_age=86400,
-        path='/',
-        secure=True,
-        httponly=True,
-        samesite='Lax'  # Lax is more compatible
-    )
-    
-    flash(f'Welcome back, {username}! You have been logged in directly.', 'success')
-    return response
