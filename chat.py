@@ -478,8 +478,15 @@ def send_message():
                                 "text": f"File '{filename}' ({file_size_mb:.1f}MB) uploaded to OpenAI vector store. You can now search its content."
                             })
                         except Exception as e:
-                            logging.error(f"OpenAI vector store file upload error: {e}")
-                            return jsonify({'error': 'Failed to upload file to OpenAI vector store'}), 500
+                            # Try to extract full traceback and OpenAI error details
+                            import traceback
+                            tb = traceback.format_exc()
+                            error_detail = str(e)
+                            # If the error has a response, include its text
+                            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                                error_detail += f"\nResponse: {e.response.text}"
+                            logging.error(f"OpenAI vector store file upload error: {error_detail}\nTraceback:\n{tb}")
+                            return jsonify({'error': f'OpenAI file upload error:\n{error_detail}\nTraceback:\n{tb}'}), 500
                     else:
                         try:
                             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
