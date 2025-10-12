@@ -213,7 +213,6 @@ class ChatApp {
             const formData = new FormData();
             formData.append('message', message);
             formData.append('model', this.currentModel);
-            
             if (file) {
                 formData.append('file', file);
             }
@@ -224,12 +223,18 @@ class ChatApp {
             });
 
             if (!response.ok) {
+                let errorText = '';
+                try {
+                    errorText = await response.text();
+                } catch (e) {}
+                this.showError(`HTTP error! status: ${response.status}<br><pre>${errorText}</pre>`);
                 throw new Error(`HTTP error! status: ${response.status}`);
             }
 
             const contentType = response.headers.get('content-type');
             if (!contentType || !contentType.includes('application/json')) {
                 const text = await response.text();
+                this.showError(`Expected JSON response, got:<br><pre>${text.substring(0, 500)}</pre>`);
                 throw new Error(`Expected JSON response, got: ${text.substring(0, 100)}`);
             }
 
@@ -244,16 +249,16 @@ class ChatApp {
                     has_file: !!file,
                     file_name: file ? file.name : null
                 });
-
                 // Clear form
                 messageInput.value = '';
                 fileInput.value = '';
             } else {
-                this.showError(data.error || 'Error sending message');
+                let errorMsg = data.error || 'Error sending message';
+                this.showError(`<strong>Error:</strong><br><pre>${errorMsg}</pre>`);
             }
         } catch (error) {
             console.error('Error:', error);
-            this.showError('Network error. Please try again.');
+            // Don't override if already shown
         } finally {
             this.hideLoading(loadingModal);
         }
