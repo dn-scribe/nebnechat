@@ -68,7 +68,30 @@ def login():
                 logging.debug(f"Request headers: {dict(request.headers)}")
                 
                 flash(f'Welcome back, {username}!', 'success')
-                return redirect(url_for('chat.chat_page'))
+                
+                # Create response with redirect and set cookies explicitly
+                response = redirect(url_for('chat.chat_page'))
+                
+                # Check if this is likely an iframe context based on headers
+                is_iframe = request.headers.get('Sec-Fetch-Dest') == 'iframe'
+                
+                # Set SameSite based on context
+                samesite = 'None' if is_iframe else 'Lax'
+                
+                # Set cookies explicitly with the appropriate settings
+                response.set_cookie(
+                    'user_token', 
+                    value=username,  # Simple non-secure user identifier for recovery
+                    max_age=86400,   # 24 hours
+                    path='/',
+                    secure=True,    # Always secure for HTTPS
+                    httponly=True,  # Protect against XSS
+                    samesite=samesite  # Adaptive based on context
+                )
+                
+                logging.debug(f"Set explicit cookie with SameSite={samesite}")
+                
+                return response
             else:
                 logging.debug(f"Password verification failed for user '{username}'.")
         else:
