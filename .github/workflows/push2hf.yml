@@ -1,0 +1,21 @@
+name: Sync to Hugging Face Space
+
+on:
+#   push:
+#     branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Space
+        env:
+          HF_TOKEN: ${{ secrets.HUGGINGFACE_API_KEY }}
+        run: |
+          git push https://dn-9281411:$HF_TOKEN@huggingface.co/spaces/dn-9281411/nebenchat main --force
