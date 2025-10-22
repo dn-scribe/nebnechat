@@ -417,7 +417,6 @@ def send_message():
                     "content": entry['ai_response']
                 })
 
-
         # Prepare current message content parts
         content_parts = []
 
@@ -513,16 +512,37 @@ def send_message():
                 "role": "user",
                 "content": message
             })
-        # Use file_search tool with vector store if present
-        tools = []
-        websearch_warning = None
-        vs_id = current_session.get("vector_store_id")
-        if vs_id:
-            tools.append({
-                "type": "file_search",
-                "vector_store_ids": [vs_id],
-                "max_num_results": 5
-            })
+
+        # --- Unified tool selection logic (websearch + file_search) ---
+        def build_tools(model, vector_store_id=None, enable_websearch=True):
+            tools = []
+            websearch_warning = None
+            websearch_supported_models = [
+                "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
+            ]
+            # File search tool
+            if vector_store_id:
+                tools.append({
+                    "type": "file_search",
+                    "vector_store_ids": [vector_store_id],
+                    "max_num_results": 5
+                })
+            # Websearch tool
+            if enable_websearch:
+                if any(model.startswith(m) for m in websearch_supported_models):
+                    tools.append({
+                        "type": "web_search_preview",
+                        "search_context_size": "low"
+                    })
+                else:
+                    websearch_warning = (
+                        "Web search is not supported for the selected model. "
+                        "Supported models: gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, o4-mini, o3, gpt-5."
+                    )
+            return tools, websearch_warning
+
+        # Enable websearch by default for send_message (can be toggled if needed)
+        tools, websearch_warning = build_tools(model, current_session.get("vector_store_id"), enable_websearch=True)
 
         logging.info(f"Making API request with model: {model}, input: {messages}, tools: {tools}")
 
@@ -578,12 +598,16 @@ def send_message():
             except Exception as e:
                 logging.error(f"Error during file cleanup check: {e}")
 
-        return jsonify({
+        response_payload = {
             'success': True,
             'response': ai_response_html,
             'timestamp': chat_entry['timestamp'],
             'model': model
-        })
+        }
+        if websearch_warning:
+            response_payload['warning'] = websearch_warning
+
+        return jsonify(response_payload)
 
     except Exception as e:
         logging.error(f"Error in chat: {e}")
@@ -618,37 +642,48 @@ def generate_file():
         
         # Create a specific prompt for file generation
         file_generation_prompt = f"""
-Generate a {file_type.upper()} file based on this request: {prompt}
-
-Please provide ONLY the file content without any explanations, markdown formatting, or additional text.
-The content should be ready to save directly as a .{file_type} file.
-"""
+        Generate a {file_type.upper()} file based on this request: {prompt}
+        
+        Please provide ONLY the file content without any explanations, markdown formatting, or additional text.
+        The content should be ready to save directly as a .{file_type} file.
+        """
         
         # Prepare OpenAI responses.create input (just use plain string for content)
         input_payload = [{
             "role": "user",
             "content": file_generation_prompt
         }]
+    
+        # --- Use unified tool selection logic ---
+        def build_tools(model, vector_store_id=None, enable_websearch=True):
+            tools = []
+            websearch_warning = None
+            websearch_supported_models = [
+                "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
+            ]
+            # File search tool (not used in generate_file, but kept for consistency)
+            if vector_store_id:
+                tools.append({
+                    "type": "file_search",
+                    "vector_store_ids": [vector_store_id],
+                    "max_num_results": 5
+                })
+            # Websearch tool
+            if enable_websearch:
+                if any(model.startswith(m) for m in websearch_supported_models):
+                    tools.append({
+                        "type": "web_search_preview",
+                        "search_context_size": "low"
+                    })
+                else:
+                    websearch_warning = (
+                        "Web search is not supported for the selected model. "
+                        "Supported models: gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, o4-mini, o3, gpt-5."
+                    )
+            return tools, websearch_warning
 
-        # Websearch tool support (optional, via form field)
-        websearch = True #request.form.get('websearch', 'off') == 'on'
-        websearch_supported_models = [
-            "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
-        ]
-        tools = []
-        websearch_warning = None
-        if websearch:
-            if any(model.startswith(m) for m in websearch_supported_models):
-                tools = [{
-                    "type": "web_search_preview",
-                    "search_context_size": "low"
-                }]
-            else:
-                websearch_warning = (
-                    "Web search is not supported for the selected model. "
-                    "Supported models: gpt-4o-mini, gpt-4o, gpt-4.1-mini, gpt-4.1, o4-mini, o3, gpt-5."
-                )
-
+        tools, websearch_warning = build_tools(model, None, enable_websearch=True)
+    
         # Call OpenAI API
         response = get_openai_client().responses.create(
             model=model,
@@ -656,7 +691,7 @@ The content should be ready to save directly as a .{file_type} file.
             tools=tools if tools else None
         )
         file_content = getattr(response, "output_text", None)
-
+    
         if not file_content:
             return jsonify({'error': 'Failed to generate file content'}), 500
         
@@ -669,15 +704,15 @@ The content should be ready to save directly as a .{file_type} file.
                 os.chmod(generated_dir, 0o777)
         except Exception as e:
             logging.error(f"Error setting permissions on {generated_dir}: {e}")
-
+    
         # Save file with timestamp to avoid conflicts
         timestamp = int(datetime.now().timestamp())
         safe_filename = secure_filename(filename)
         file_path = os.path.join(generated_dir, f"{session['user_id']}_{timestamp}_{safe_filename}")
-
+    
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(file_content)
-
+    
         # Save to chat history
         chat_entry = {
             'timestamp': datetime.now().isoformat(),
@@ -689,12 +724,12 @@ The content should be ready to save directly as a .{file_type} file.
             'generated_file': file_path,
             'file_name': f"{session['user_id']}_{timestamp}_{safe_filename}"
         }
-
+    
         current_session, _ = get_current_session(session['user_id'])
         history = current_session["exchanges"]
         history.append(chat_entry)
         set_current_session(session['user_id'], current_session)
-
+    
         response_payload = {
             'success': True,
             'filename': f"{session['user_id']}_{timestamp}_{safe_filename}",
@@ -705,7 +740,7 @@ The content should be ready to save directly as a .{file_type} file.
         }
         if websearch_warning:
             response_payload['warning'] = websearch_warning
-
+    
         return jsonify(response_payload)
         
     except Exception as e:
