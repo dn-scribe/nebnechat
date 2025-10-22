@@ -235,40 +235,19 @@ def chat_page():
     logging.debug(f"Request cookies: {request.cookies}")
     logging.debug(f"User agent: {request.headers.get('User-Agent', '')}")
     
-    # Check if user is authenticated either in session or in cookies
+    # Check if user is in session
     if 'user_id' not in session:
-        # Emergency fallback: try to get user from cookies directly
-        user_from_cookie = None
+        # Special handling for potential mobile/iframe cookie issues
+        user_agent = request.headers.get('User-Agent', '').lower()
+        is_mobile = 'iphone' in user_agent or 'android' in user_agent or 'mobile' in user_agent
         
-        # Check cookie for user information
-        for cookie_name in ['session', 'nebenchat_session']:
-            cookie_value = request.cookies.get(cookie_name, '')
-            if 'neben' in cookie_value:
-                user_from_cookie = 'neben'
-                break
-            elif 'danny' in cookie_value:
-                user_from_cookie = 'danny'
-                break
-        
-        # If we found a user in the cookie, recreate the session
-        if user_from_cookie:
-            logging.warning(f"Recovered user '{user_from_cookie}' from cookie - fixing session")
-            session['user_id'] = user_from_cookie
-            session['is_admin'] = user_from_cookie == 'danny'
-            session.permanent = True
-            session.modified = True
+        if is_mobile and not request.cookies:
+            logging.warning(f"Mobile client detected without cookies: {user_agent}")
+            flash("Your browser isn't saving cookies properly. Try opening this page directly (not in an iframe).", 'warning')
         else:
-            # No user found in session or cookies
-            user_agent = request.headers.get('User-Agent', '').lower()
-            is_mobile = 'iphone' in user_agent or 'android' in user_agent or 'mobile' in user_agent
-            
-            if is_mobile and not request.cookies:
-                logging.warning(f"Mobile client detected without cookies: {user_agent}")
-                flash("Your browser isn't saving cookies properly. Try opening this page directly (not in an iframe).", 'warning')
-            else:
-                logging.warning("No user_id found in session or cookies, redirecting to login")
-            
-            return redirect(url_for('auth.login'))
+            logging.warning("No user_id found in session, redirecting to login")
+        
+        return redirect(url_for('auth.login'))
     
     # Log basic session data for debugging
     logging.debug(f"Chat page access - user_id: {session['user_id']}")
