@@ -430,10 +430,8 @@ def send_message():
                 if '.' in original_filename and '.' not in safe_filename:
                     file_ext = original_filename.rsplit('.', 1)[1].lower()
                     safe_filename = f"{safe_filename}.{file_ext}"
-                # Ensure directory exists with proper permissions
                 os.makedirs('/tmp/uploads', exist_ok=True)
                 try:
-                    # Try to ensure directory is writable
                     if not os.access('/tmp/uploads', os.W_OK):
                         os.chmod('/tmp/uploads', 0o777)
                 except Exception as e:
@@ -456,33 +454,28 @@ def send_message():
                 if file_ext in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
                     base64_image = encode_image(filepath)
                     if base64_image:
+                        # For images, use the supported 'image_url' content type
                         content_parts.append({
-                            "type": "input_image",
+                            "type": "image_url",
                             "image_url": f"data:image/jpeg;base64,{base64_image}"
                         })
                     else:
                         return jsonify({'error': 'Failed to process image'}), 400
                 elif file_ext in {'txt', 'md', 'py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'sh', 'cpp', 'c', 'java', 'php', 'rb', 'go', 'rs', 'swift', 'kt', 'ts', 'jsx', 'tsx', 'vue', 'sql', 'rtf', 'pdf', 'docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls', 'csv'}:
-                    # If file is >4KB, upload to OpenAI and attach to vector store
                     if file_size_bytes > 4096:
                         try:
                             client = get_openai_client()
                             with open(filepath, "rb") as f:
                                 file_resp = client.files.create(file=f, purpose="assistants")
                             file_id = file_resp.id
-                            # Attach file to vector store
                             vs_id = current_session["vector_store_id"]
                             client.vector_stores.files.create(vector_store_id=vs_id, file_id=file_id)
-                            content_parts.append({
-                                "type": "input_text",
-                                "text": f"File '{filename}' ({file_size_mb:.1f}MB) uploaded to OpenAI vector store. You can now search its content."
-                            })
+                            # Instead of input_text, just append a string message
+                            content_parts.append(f"File '{filename}' ({file_size_mb:.1f}MB) uploaded to OpenAI vector store. You can now search its content.")
                         except Exception as e:
-                            # Try to extract full traceback and OpenAI error details
                             import traceback
                             tb = traceback.format_exc()
                             error_detail = str(e)
-                            # If the error has a response, include its text
                             if hasattr(e, 'response') and hasattr(e.response, 'text'):
                                 error_detail += f"\nResponse: {e.response.text}"
                             logging.error(f"OpenAI vector store file upload error: {error_detail}\nTraceback:\n{tb}")
@@ -491,24 +484,35 @@ def send_message():
                         try:
                             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                                 file_content = f.read()
-                            content_parts.append({
-                                "type": "input_text",
-                                "text": f"File content ({filename}):\n```{file_ext}\n{file_content}\n```"
-                            })
-                            
+                            # Instead of input_text, just append the string
+                            content_parts.append(f"File content ({filename}):\n```{file_ext}\n{file_content}\n```")
                         except Exception as e:
                             logging.error(f"Error reading text file: {e}")
                             return jsonify({'error': 'Failed to read text file'}), 400
                 else:
                     return jsonify({'error': f'Unsupported file type: {file_ext}'}), 400
 
-        if content_parts:
-            messages.extend(content_parts)
+        # Ensure all content_parts are wrapped as user messages
+        for part in content_parts:
+            if isinstance(part, dict) and part.get("type") == "image_url":
+                # For images, use OpenAI's supported format (if API supports images in chat)
+                messages.append({
+                    "role": "user",
+                    "content": [part]
+                })
+            else:
+                # For text, wrap as user message
+                messages.append({
+                    "role": "user",
+                    "content": part if isinstance(part, str) else part.get("text", "")
+                })
 
-        messages.append({
-          "role": "user",
-            "content": message if message else ""
-        })
+        # Always add the user's message as a user message
+        if message:
+            messages.append({
+                "role": "user",
+                "content": message
+            })
         # Use file_search tool with vector store if present
         tools = []
         websearch_warning = None
@@ -521,12 +525,21 @@ def send_message():
             })
 
         logging.info(f"Making API request with model: {model}, input: {messages}, tools: {tools}")
-        response = get_openai_client().responses.create(
-            model=model,
-            input=messages,
-            tools=tools if tools else None
-        )
-        ai_response = getattr(response, "output_text", None)
+
+        try:
+            response = get_openai_client().responses.create(
+                model=model,
+                input=messages,
+                tools=tools if tools else None
+            )
+            ai_response = getattr(response, "output_text", None)
+        except Exception as e:
+            # Show OpenAI error to user if available
+            error_msg = str(e)
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                error_msg += f"\nOpenAI response: {e.response.text}"
+            logging.error(f"Error in chat: {error_msg}")
+            return jsonify({'error': f'OpenAI API error: {error_msg}'}), 400
 
         if not ai_response:
             logging.warning(f"Empty response from model {model} for user {user_id}")
@@ -611,19 +624,14 @@ Please provide ONLY the file content without any explanations, markdown formatti
 The content should be ready to save directly as a .{file_type} file.
 """
         
-        # Prepare OpenAI responses.create input
+        # Prepare OpenAI responses.create input (just use plain string for content)
         input_payload = [{
             "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": file_generation_prompt
-                }
-            ]
+            "content": file_generation_prompt
         }]
 
         # Websearch tool support (optional, via form field)
-        websearch = request.form.get('websearch', 'off') == 'on'
+        websearch = True #request.form.get('websearch', 'off') == 'on'
         websearch_supported_models = [
             "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini", "gpt-4.1", "o4-mini", "o3", "gpt-5"
         ]
