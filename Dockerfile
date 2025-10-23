@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     libpq-dev \
     curl \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Create required temp directories with proper permissions
