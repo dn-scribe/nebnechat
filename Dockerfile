@@ -3,6 +3,7 @@ FROM python:3.11-slim
 # Set work directory
 WORKDIR /app
 
+
 # Install system dependencies (if needed)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -12,6 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     && rm -rf /var/lib/apt/lists/*
+
+# Ensure git is in PATH and set GIT_PYTHON_GIT_EXECUTABLE
+RUN which git
+ENV PATH="/usr/bin:/usr/local/bin:/bin:$PATH"
+ENV GIT_PYTHON_GIT_EXECUTABLE=/usr/bin/git
 
 # Create required temp directories with proper permissions
 RUN mkdir -p /tmp/uploads /tmp/downloaded && \
