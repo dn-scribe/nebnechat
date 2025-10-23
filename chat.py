@@ -674,6 +674,10 @@ def generate_file():
         current_session, _ = get_current_session(session['user_id'])
         history = current_session["exchanges"]
         history.append(chat_entry)
+        # Set summary if this is the first message in the session and summary is empty
+        if len(history) == 1 and not current_session.get("summary"):
+            # Use a simple summary for file generation
+            current_session["summary"] = f"File: {prompt[:20]}{'...' if len(prompt.split()) > 20 else ''}"
         set_current_session(session['user_id'], current_session)
     
         response_payload = {
@@ -780,6 +784,10 @@ def generate_image():
         current_session, _ = get_current_session(session['user_id'])
         history = current_session["exchanges"]
         history.append(chat_entry)
+        # Set summary if this is the first message in the session and summary is empty
+        if len(history) == 1 and not current_session.get("summary"):
+            # Use a simple summary for image generation
+            current_session["summary"] = f"Image: {prompt[:20]}{'...' if len(prompt.split()) > 20 else ''}"
         set_current_session(session['user_id'], current_session)
 
         return jsonify({
