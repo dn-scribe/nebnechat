@@ -33,5 +33,12 @@ RUN pip install --upgrade pip \
 # Expose port 7860
 EXPOSE 7860
 
+
+# Add user with UID 1000 if not present and run as that user
+RUN if ! id -u 1000 >/dev/null 2>&1; then \
+    useradd -u 1000 -m appuser; \
+fi
+USER 1000
+
 # Default command (adjust as needed)
 CMD ["python", "main.py"]
