@@ -5,17 +5,20 @@ import logging
 from flask import Blueprint, render_template, request, session, redirect, url_for, flash
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from storage_factory import get_storage
+
 auth_bp = Blueprint('auth', __name__)
 
 USERS_FILE = 'users.yml'
 SECRET_KEY = os.environ.get('SECRET', 'default-secret-key')
+storage = get_storage()
 
 def load_users():
     """Load users from YAML file"""
     try:
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, 'r') as f:
-                return yaml.safe_load(f) or {}
+        if storage.exists(USERS_FILE):
+            data = storage.read(USERS_FILE, mode='r')
+            return yaml.safe_load(data) or {}
         return {}
     except Exception as e:
         logging.error(f"Error loading users: {e}")
@@ -24,8 +27,8 @@ def load_users():
 def save_users(users):
     """Save users to YAML file"""
     try:
-        with open(USERS_FILE, 'w') as f:
-            yaml.dump(users, f, default_flow_style=False)
+        yaml_str = yaml.dump(users, default_flow_style=False)
+        storage.write(USERS_FILE, yaml_str, mode='w')
         return True
     except Exception as e:
         logging.error(f"Error saving users: {e}")
@@ -145,8 +148,8 @@ def admin():
                     # Clean up user's chat history
                     try:
                         chat_file = f'chat_history_{target_user}.json'
-                        if os.path.exists(chat_file):
-                            os.remove(chat_file)
+                        if storage.exists(chat_file):
+                            storage.remove(chat_file)
                     except Exception as e:
                         logging.error(f"Error cleaning up chat history: {e}")
                 else:
