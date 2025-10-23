@@ -21,6 +21,7 @@ setup(
         "werkzeug>=3.1.3",
         "markdown>=3.8.2",
         "pygments>=2.19.2",
+        "GitPython>=3.1.43",
     ],
     python_requires=">=3.11",
 )

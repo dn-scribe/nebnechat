@@ -15,7 +15,10 @@ from pygments.formatters import HtmlFormatter
 from pygments.util import ClassNotFound
 import re
 
+from storage_factory import get_storage
+
 chat_bp = Blueprint('chat', __name__)
+storage = get_storage()
 
 # OpenAI setup
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "your-api-key-here")
@@ -133,34 +136,31 @@ import uuid
 
 def load_chat_sessions(user_id):
     """Load user's chat sessions (list of sessions, each a dict with metadata and exchanges)"""
-    filename = f'/tmp/chat_history_{user_id}.json'
+    filename = f'chat_history_{user_id}.json'
     try:
-        # Ensure parent directory exists
-        os.makedirs('/tmp', exist_ok=True)
-        
-        if os.path.exists(filename):
-            with open(filename, 'r') as f:
-                data = json.load(f)
-                # Migrate old flat history to a single session
-                if isinstance(data, list) and data and isinstance(data[0], dict) and "exchanges" in data[0]:
-                    # Add summary field if missing
-                    for s in data:
-                        if "summary" not in s:
-                            if s.get("exchanges") and s["exchanges"]:
-                                first_msg = s["exchanges"][0].get("user_message", "")
-                                s["summary"] = " ".join(first_msg.split()[:10]) + ("..." if len(first_msg.split()) > 10 else "")
-                            else:
-                                s["summary"] = ""
-                    return data
-                elif isinstance(data, list):
-                    session = {
-                        "session_id": str(uuid.uuid4()),
-                        "created_at": datetime.now().isoformat(),
-                        "updated_at": datetime.now().isoformat(),
-                        "exchanges": data,
-                        "summary": " ".join(data[0].get("user_message", "").split()[:10]) + ("..." if len(data[0].get("user_message", "").split()) > 10 else "") if data else ""
-                    }
-                    return [session]
+        if storage.exists(filename):
+            data = storage.read(filename, mode='r')
+            data = json.loads(data)
+            # Migrate old flat history to a single session
+            if isinstance(data, list) and data and isinstance(data[0], dict) and "exchanges" in data[0]:
+                # Add summary field if missing
+                for s in data:
+                    if "summary" not in s:
+                        if s.get("exchanges") and s["exchanges"]:
+                            first_msg = s["exchanges"][0].get("user_message", "")
+                            s["summary"] = " ".join(first_msg.split()[:10]) + ("..." if len(first_msg.split()) > 10 else "")
+                        else:
+                            s["summary"] = ""
+                return data
+            elif isinstance(data, list):
+                session = {
+                    "session_id": str(uuid.uuid4()),
+                    "created_at": datetime.now().isoformat(),
+                    "updated_at": datetime.now().isoformat(),
+                    "exchanges": data,
+                    "summary": " ".join(data[0].get("user_message", "").split()[:10]) + ("..." if len(data[0].get("user_message", "").split()) > 10 else "") if data else ""
+                }
+                return [session]
         return []
     except Exception as e:
         logging.error(f"Error loading chat sessions for {user_id}: {e}")
@@ -168,11 +168,8 @@ def load_chat_sessions(user_id):
 
 def save_chat_sessions(user_id, sessions):
     """Save user's chat sessions (keep only last 10 sessions) and delete OpenAI vector store if session is deleted"""
-    filename = f'/tmp/chat_history_{user_id}.json'
+    filename = f'chat_history_{user_id}.json'
     try:
-        # Ensure parent directory exists
-        os.makedirs('/tmp', exist_ok=True)
-        
         # Clean up files from entries that will be removed (from dropped sessions)
         if len(sessions) > 10:
             sessions_to_remove = sessions[:-10]
@@ -187,16 +184,18 @@ def save_chat_sessions(user_id, sessions):
                     except Exception as e:
                         logging.error(f"Error deleting OpenAI vector store {vector_store_id}: {e}")
                 for entry in session.get("exchanges", []):
-                    if entry.get('has_file') and entry.get('file_name'):
-                        for file_path in glob.glob(f"/tmp/uploads/{user_id}_*_{entry['file_name']}"):
+                    # Remove all files referenced in the exchange using storage abstraction
+                    for key in ['file_path', 'generated_file']:
+                        file_path = entry.get(key)
+                        if file_path and storage.exists(file_path):
                             try:
-                                os.remove(file_path)
-                                logging.info(f"Cleaned up file: {file_path}")
+                                storage.remove(file_path)
+                                logging.info(f"Cleaned up file from storage: {file_path}")
                             except Exception as e:
-                                logging.error(f"Error removing file {file_path}: {e}")
+                                logging.error(f"Error removing file from storage {file_path}: {e}")
             sessions = sessions[-10:]
-        with open(filename, 'w') as f:
-            json.dump(sessions, f, indent=2)
+        json_str = json.dumps(sessions, indent=2)
+        storage.write(filename, json_str, mode='w')
         return True
     except Exception as e:
         logging.error(f"Error saving chat sessions for {user_id}: {e}")
@@ -222,8 +221,8 @@ def set_current_session(user_id, session):
 def encode_image(image_path):
     """Encode image to base64"""
     try:
-        with open(image_path, "rb") as image_file:
-            return base64.b64encode(image_file.read()).decode('utf-8')
+        data = storage.read(image_path, mode="rb")
+        return base64.b64encode(data).decode('utf-8')
     except Exception as e:
         logging.error(f"Error encoding image: {e}")
         return None
@@ -385,29 +384,30 @@ def send_message():
                 if '.' in original_filename and '.' not in safe_filename:
                     file_ext = original_filename.rsplit('.', 1)[1].lower()
                     safe_filename = f"{safe_filename}.{file_ext}"
-                os.makedirs('/tmp/uploads', exist_ok=True)
-                try:
-                    if not os.access('/tmp/uploads', os.W_OK):
-                        os.chmod('/tmp/uploads', 0o777)
-                except Exception as e:
-                    logging.error(f"Error setting permissions on /tmp/uploads: {e}")
+                # Use storage abstraction for uploads
                 timestamp = int(datetime.now().timestamp())
-                filepath = os.path.join('/tmp/uploads', f"{user_id}_{timestamp}_{safe_filename}")
-                file.save(filepath)
-                uploaded_file = filepath
+                storage_dir = f"uploads/{user_id}"
+                storage.makedirs(storage_dir, exist_ok=True)
+                storage_path = f"{storage_dir}/{timestamp}_{safe_filename}"
+                # Save file using storage abstraction
+                file.seek(0)
+                file_data = file.read()
+                storage.write(storage_path, file_data, mode="wb")
+                uploaded_file = storage_path
                 filename = safe_filename
                 try:
-                    file_size_mb = get_file_size_mb(filepath)
-                    file_size_bytes = os.path.getsize(filepath)
+                    # Use storage to get file size
+                    file_size_bytes = len(file_data)
+                    file_size_mb = file_size_bytes / (1024 * 1024)
                     if file_size_mb > MAX_FILE_SIZE_MB:
-                        os.remove(filepath)
+                        storage.remove(storage_path)
                         return jsonify({'error': f'File too large. Maximum size is {MAX_FILE_SIZE_MB}MB, your file is {file_size_mb:.1f}MB'}), 400
                 except Exception as e:
                     logging.error(f"Error checking file size: {e}")
                     return jsonify({'error': 'Error processing file'}), 400
                 file_ext = filename.lower().split('.')[-1] if '.' in filename else ''
                 if file_ext in {'png', 'jpg', 'jpeg', 'gif', 'webp'}:
-                    base64_image = encode_image(filepath)
+                    base64_image = encode_image(uploaded_file)
                     if base64_image:
                         # For images, use the supported 'image_url' content type
                         content_parts.append({
@@ -420,8 +420,12 @@ def send_message():
                     if file_size_bytes > 4096:
                         try:
                             client = get_openai_client()
-                            with open(filepath, "rb") as f:
-                                file_resp = client.files.create(file=f, purpose="assistants")
+                            # Read file from storage for OpenAI upload
+                            file_data_for_openai = storage.read(uploaded_file, mode="rb")
+                            import io
+                            file_obj = io.BytesIO(file_data_for_openai)
+                            file_obj.name = filename
+                            file_resp = client.files.create(file=file_obj, purpose="assistants")
                             file_id = file_resp.id
                             vs_id = current_session["vector_store_id"]
                             client.vector_stores.files.create(vector_store_id=vs_id, file_id=file_id)
@@ -437,8 +441,7 @@ def send_message():
                             return jsonify({'error': f'OpenAI file upload error:\n{error_detail}\nTraceback:\n{tb}'}), 500
                     else:
                         try:
-                            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                                file_content = f.read()
+                            file_content = storage.read(uploaded_file, mode='r', encoding='utf-8')
                             # Instead of input_text, just append the string
                             content_parts.append(f"File content ({filename}):\n```{file_ext}\n{file_content}\n```")
                         except Exception as e:
@@ -530,7 +533,8 @@ def send_message():
             'ai_response': ai_response,
             'ai_response_html': ai_response_html,
             'has_file': uploaded_file is not None,
-            'file_name': os.path.basename(uploaded_file) if uploaded_file else None
+            'file_name': os.path.basename(uploaded_file) if uploaded_file else None,
+            'file_path': uploaded_file if uploaded_file else None
         }
 
         # Append to current session, limit to 10 exchanges
@@ -544,15 +548,7 @@ def send_message():
         # Save sessions (move current to end)
         set_current_session(user_id, current_session)
 
-        if uploaded_file and os.path.exists(uploaded_file):
-            try:
-                file_age = os.path.getmtime(uploaded_file)
-                current_time = datetime.now().timestamp()
-                if current_time - file_age > 3600:
-                    os.remove(uploaded_file)
-                    logging.info(f"Cleaned up old file: {uploaded_file}")
-            except Exception as e:
-                logging.error(f"Error during file cleanup check: {e}")
+        # Remove old file cleanup logic; storage abstraction will handle file lifecycle
 
         response_payload = {
             'success': True,
@@ -651,23 +647,16 @@ def generate_file():
         if not file_content:
             return jsonify({'error': 'Failed to generate file content'}), 500
         
-        # Create generated files directory (now /tmp/downloaded)
-        generated_dir = '/tmp/downloaded'
-        os.makedirs(generated_dir, exist_ok=True)
-        try:
-            # Try to ensure directory is writable
-            if not os.access(generated_dir, os.W_OK):
-                os.chmod(generated_dir, 0o777)
-        except Exception as e:
-            logging.error(f"Error setting permissions on {generated_dir}: {e}")
-    
-        # Save file with timestamp to avoid conflicts
+        # Use storage abstraction for generated files
         timestamp = int(datetime.now().timestamp())
+        storage_dir = f"generated/{session['user_id']}"
+        storage.makedirs(storage_dir, exist_ok=True)
         safe_filename = secure_filename(filename)
-        file_path = os.path.join(generated_dir, f"{session['user_id']}_{timestamp}_{safe_filename}")
-    
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.write(file_content)
+        user_id = session['user_id']
+        full_filename = f"{user_id}_{timestamp}_{safe_filename}"
+        storage_path = f"{storage_dir}/{full_filename}"
+        storage.write(storage_path, file_content, mode="w", encoding="utf-8")
+        file_path = storage_path
     
         # Save to chat history
         chat_entry = {
@@ -678,19 +667,24 @@ def generate_file():
             'ai_response_html': f"Generated file: <strong>{safe_filename}</strong>",
             'has_file': True,
             'generated_file': file_path,
-            'file_name': f"{session['user_id']}_{timestamp}_{safe_filename}"
+            'file_name': full_filename,
+            'file_path': file_path
         }
     
         current_session, _ = get_current_session(session['user_id'])
         history = current_session["exchanges"]
         history.append(chat_entry)
+        # Set summary if this is the first message in the session and summary is empty
+        if len(history) == 1 and not current_session.get("summary"):
+            # Use a simple summary for file generation
+            current_session["summary"] = f"File: {prompt[:20]}{'...' if len(prompt.split()) > 20 else ''}"
         set_current_session(session['user_id'], current_session)
     
         response_payload = {
             'success': True,
-            'filename': f"{session['user_id']}_{timestamp}_{safe_filename}",
+            'filename': full_filename,
             'file_path': file_path,
-            'download_url': f"/chat/download-generated/{session['user_id']}_{timestamp}_{safe_filename}",
+            'download_url': f"/chat/download-generated/{full_filename}",
             'timestamp': chat_entry['timestamp'],
             'model': model
         }
@@ -752,20 +746,19 @@ def generate_image():
         # Download the image and save locally
         import requests
         from urllib.parse import urlparse
-        local_dir = '/tmp/downloaded'
-        os.makedirs(local_dir, exist_ok=True)
-        # Use timestamp and user_id for unique filename
+        # Use storage abstraction for generated images
         timestamp = int(datetime.now().timestamp())
         ext = image_url.split('.')[-1].split('?')[0]
         if ext.lower() not in ['png', 'jpg', 'jpeg', 'webp', 'gif']:
             ext = 'png'
+        storage_dir = f"images/{session['user_id']}"
+        storage.makedirs(storage_dir, exist_ok=True)
         local_filename = f"{session['user_id']}_{timestamp}.{ext}"
-        local_path = os.path.join(local_dir, local_filename)
+        storage_path = f"{storage_dir}/{local_filename}"
         try:
             img_resp = requests.get(image_url)
             img_resp.raise_for_status()
-            with open(local_path, 'wb') as f:
-                f.write(img_resp.content)
+            storage.write(storage_path, img_resp.content, mode="wb")
         except Exception as e:
             logging.error(f"Error downloading generated image: {e}")
             return jsonify({'error': 'Failed to download generated image'}), 500
@@ -784,12 +777,17 @@ def generate_image():
             'ai_response': f"Generated image using {model_display}",
             'image_url': f"/chat/download-image/{local_filename}",
             'has_file': True,
-            'file_name': local_filename
+            'file_name': local_filename,
+            'file_path': storage_path
         }
 
         current_session, _ = get_current_session(session['user_id'])
         history = current_session["exchanges"]
         history.append(chat_entry)
+        # Set summary if this is the first message in the session and summary is empty
+        if len(history) == 1 and not current_session.get("summary"):
+            # Use a simple summary for image generation
+            current_session["summary"] = f"Image: {prompt[:20]}{'...' if len(prompt.split()) > 20 else ''}"
         set_current_session(session['user_id'], current_session)
 
         return jsonify({
@@ -811,6 +809,18 @@ def clear_history():
     try:
         # Archive current session and start a new one
         sessions = load_chat_sessions(session['user_id'])
+        if sessions:
+            current_session = sessions[-1]
+            # Remove all files associated with the current session using storage abstraction
+            for entry in current_session.get("exchanges", []):
+                for key in ['file_path', 'generated_file']:
+                    file_path = entry.get(key)
+                    if file_path and storage.exists(file_path):
+                        try:
+                            storage.remove(file_path)
+                            logging.info(f"Cleaned up file from storage: {file_path}")
+                        except Exception as e:
+                            logging.error(f"Error removing file from storage {file_path}: {e}")
         new_session = {
             "session_id": str(uuid.uuid4()),
             "created_at": datetime.now().isoformat(),
@@ -891,10 +901,10 @@ def download_image(filename):
         # Optionally, check user_id in filename
         if not filename.startswith(f"{session['user_id']}_"):
             return jsonify({'error': 'Access denied'}), 403
-        file_path = os.path.join(local_dir, filename)
-        if not os.path.exists(file_path):
+        # Use storage abstraction to read image
+        storage_path = f"images/{session['user_id']}/{filename}"
+        if not storage.exists(storage_path):
             return jsonify({'error': 'Image not found'}), 404
-        # Guess mimetype
         ext = filename.split('.')[-1].lower()
         mimetype = 'image/png'
         if ext in ['jpg', 'jpeg']:
@@ -903,8 +913,10 @@ def download_image(filename):
             mimetype = 'image/gif'
         elif ext == 'webp':
             mimetype = 'image/webp'
+        from io import BytesIO
+        file_data = storage.read(storage_path, mode="rb")
         return send_file(
-            file_path,
+            BytesIO(file_data),
             as_attachment=True,
             download_name=filename,
             mimetype=mimetype
@@ -924,10 +936,13 @@ def download_generated_file(filename):
             return jsonify({'error': 'Invalid filename'}), 400
         if not filename.startswith(f"{session['user_id']}_"):
             return jsonify({'error': 'Access denied'}), 403
-        file_path = os.path.join(generated_dir, filename)
-        if not os.path.exists(file_path):
-            return jsonify({'error': 'File not found or access denied'}), 404
-        # Determine MIME type based on extension
+        # Use storage abstraction to read generated file
+        storage_path = f"generated/{session['user_id']}/{filename}"
+        import logging
+        logging.info(f"Download request for generated file: {filename}, storage_path: {storage_path}, exists: {storage.exists(storage_path)}")
+        if not storage.exists(storage_path):
+            logging.error(f"File not found in storage: {storage_path}")
+            return jsonify({'error': f'File not found or access denied: {storage_path}'}), 404
         ext = filename.split('.')[-1].lower()
         mime_types = {
             'txt': 'text/plain',
@@ -944,8 +959,10 @@ def download_generated_file(filename):
             'xml': 'application/xml'
         }
         mimetype = mime_types.get(ext, 'text/plain')
+        from io import BytesIO
+        file_data = storage.read(storage_path, mode="rb")
         return send_file(
-            file_path,
+            BytesIO(file_data),
             as_attachment=True,
             download_name=filename.split('_', 2)[-1],
             mimetype=mimetype
