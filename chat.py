@@ -16,6 +16,7 @@ from pygments.util import ClassNotFound
 import re
 
 from storage_factory import get_storage
+from git_storage import GitStorageError
 
 chat_bp = Blueprint('chat', __name__)
 storage = get_storage()
@@ -166,8 +167,15 @@ def load_chat_sessions(user_id):
         logging.error(f"Error loading chat sessions for {user_id}: {e}")
         return []
 
+def is_valid_storage_path(path):
+    """Return True if the storage path is a non-empty string and not just whitespace."""
+    return isinstance(path, str) and path.strip() != ""
+
 def save_chat_sessions(user_id, sessions):
     """Save user's chat sessions (keep only last 10 sessions) and delete OpenAI vector store if session is deleted"""
+    if not isinstance(user_id, str) or not user_id.strip():
+        logging.error(f"Refusing to save chat sessions: invalid user_id '{user_id}' (empty or not a string)")
+        return False
     filename = f'chat_history_{user_id}.json'
     try:
         # Clean up files from entries that will be removed (from dropped sessions)
@@ -187,7 +195,7 @@ def save_chat_sessions(user_id, sessions):
                     # Remove all files referenced in the exchange using storage abstraction
                     for key in ['file_path', 'generated_file']:
                         file_path = entry.get(key)
-                        if file_path and storage.exists(file_path):
+                        if is_valid_storage_path(file_path) and storage.exists(file_path):
                             try:
                                 storage.remove(file_path)
                                 logging.info(f"Cleaned up file from storage: {file_path}")
@@ -195,6 +203,9 @@ def save_chat_sessions(user_id, sessions):
                                 logging.error(f"Error removing file from storage {file_path}: {e}")
             sessions = sessions[-10:]
         json_str = json.dumps(sessions, indent=2)
+        if not is_valid_storage_path(filename):
+            logging.error(f"Refusing to write chat sessions: invalid filename '{filename}' for user {user_id}")
+            return False
         storage.write(filename, json_str, mode='w')
         return True
     except Exception as e:
@@ -392,7 +403,11 @@ def send_message():
                 # Save file using storage abstraction
                 file.seek(0)
                 file_data = file.read()
-                storage.write(storage_path, file_data, mode="wb")
+                try:
+                    storage.write(storage_path, file_data, mode="wb")
+                except GitStorageError as e:
+                    logging.error(f"Git storage error during file upload: {e}")
+                    return jsonify({'error': 'A storage error occurred. Your file could not be saved. Please try again later.'}), 500
                 uploaded_file = storage_path
                 filename = safe_filename
                 try:
@@ -655,7 +670,11 @@ def generate_file():
         user_id = session['user_id']
         full_filename = f"{user_id}_{timestamp}_{safe_filename}"
         storage_path = f"{storage_dir}/{full_filename}"
-        storage.write(storage_path, file_content, mode="w", encoding="utf-8")
+        try:
+            storage.write(storage_path, file_content, mode="w", encoding="utf-8")
+        except GitStorageError as e:
+            logging.error(f"Git storage error during file generation: {e}")
+            return jsonify({'error': 'A storage error occurred. Your generated file could not be saved. Please try again later.'}), 500
         file_path = storage_path
     
         # Save to chat history
@@ -758,7 +777,11 @@ def generate_image():
         try:
             img_resp = requests.get(image_url)
             img_resp.raise_for_status()
-            storage.write(storage_path, img_resp.content, mode="wb")
+            try:
+                storage.write(storage_path, img_resp.content, mode="wb")
+            except GitStorageError as e:
+                logging.error(f"Git storage error during image save: {e}")
+                return jsonify({'error': 'A storage error occurred. Your generated image could not be saved. Please try again later.'}), 500
         except Exception as e:
             logging.error(f"Error downloading generated image: {e}")
             return jsonify({'error': 'Failed to download generated image'}), 500
