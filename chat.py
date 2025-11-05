@@ -123,14 +123,22 @@ def process_markdown_response(text):
     
     # Process code blocks with language specification
     text = re.sub(r'```(\w+)?\n(.*?)```', highlight_code, text, flags=re.DOTALL)
-    
+
     # Process inline code
     text = re.sub(r'`([^`]+)`', r'<code class="inline-code">\1</code>', text)
-    
+
+    # Convert plain URLs to clickable links (before markdown conversion)
+    # Improved URL pattern: exclude trailing punctuation (.,;:!?)
+    url_pattern = r'(?<!["])(https?://[\w\-\.\?\,\'/\\\+&%\$#=~:;@]+?)(?=[.,;:!?]?\s|$)'
+    def url_repl(match):
+        url = match.group(1)
+        return f'<a href="{url}" target="_blank" rel="noopener noreferrer">{url}</a>'
+    text = re.sub(url_pattern, url_repl, text)
+
     # Convert markdown to HTML
     md = markdown.Markdown(extensions=['fenced_code', 'codehilite', 'tables'])
     html_content = md.convert(text)
-    
+
     return html_content
 
 import uuid
