@@ -309,8 +309,8 @@ def send_message():
         # Load current session and all sessions
         current_session, sessions = get_current_session(user_id)
 
-        # If no session exists or last session has exchanges, create a new session
-        if not current_session or (current_session and current_session.get("exchanges")):
+        # Only create a new session if there is no current session, or after long inactivity (handled below)
+        if not current_session:
             # Create a new OpenAI vector store for this session
             client = get_openai_client()
             vs_name = f"session_{user_id}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
