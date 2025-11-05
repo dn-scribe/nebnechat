@@ -7,3 +7,6 @@ uploads/
 chat_history_*.json
 cookies.txt
 attached_assets/
+images/
+generated/
+
