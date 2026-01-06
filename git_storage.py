@@ -2,6 +2,7 @@ import os
 import tempfile
 import logging
 from typing import Any, List, Optional
+from urllib.parse import urlparse, urlunparse
 from storage import FileStorage
 from git import Repo, GitCommandError
 
@@ -17,7 +18,7 @@ class GitFileStorage(FileStorage):
             raise ValueError(f"Invalid file path: '{path}'")
 
     def __init__(self, repo_url: str, branch: str = "main"):
-        self.repo_url = repo_url
+        self.repo_url = self._with_credentials(repo_url)
         self.branch = branch
         self.local_dir = tempfile.mkdtemp(prefix="git_storage_")
         if not os.path.exists(os.path.join(self.local_dir, ".git")):
@@ -25,6 +26,31 @@ class GitFileStorage(FileStorage):
         else:
             self.repo = Repo(self.local_dir)
         self.repo.git.checkout(self.branch)
+        # Ensure remote keeps credentialed URL to avoid push failures
+        try:
+            origin = self.repo.remote(name="origin")
+            origin.set_url(self.repo_url)
+        except Exception:
+            logging.debug("Could not reset remote URL for git storage repo")
+
+    def _with_credentials(self, repo_url: str) -> str:
+        """Inject credentials into repo URL when not already provided."""
+        parsed = urlparse(repo_url)
+        # If credentials already embedded, respect existing configuration
+        if parsed.username and parsed.password:
+            return repo_url
+
+        token = os.environ.get("GIT_STORAGE_TOKEN") or os.environ.get("GITHUB_TOKEN")
+        if not token:
+            logging.warning("Git storage token missing; repository may be read-only")
+            return repo_url
+
+        username = parsed.username or os.environ.get("GIT_STORAGE_USER") or os.environ.get("GITHUB_USERNAME") or "dn-scribe"
+        hostname = parsed.hostname or parsed.netloc or "github.com"
+        if parsed.port and hostname.find(":") == -1:
+            hostname = f"{hostname}:{parsed.port}"
+        credentialed = f"{username}:{token}@{hostname}"
+        return urlunparse(parsed._replace(netloc=credentialed))
 
     def _full_path(self, path: str) -> str:
         self._validate_path(path)
