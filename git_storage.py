@@ -72,9 +72,9 @@ class GitFileStorage(FileStorage):
                 f.write(data)
             self.repo.git.add(full_path)
             self.repo.index.commit(f"Update {path}")
-            # Always pull before pushing to avoid non-fast-forward errors
+            # Always pull (rebasing local commits) before pushing to avoid non-fast-forward errors
             self.repo.git.fetch("origin", self.branch)
-            self.repo.git.pull("origin", self.branch)
+            self.repo.git.pull("--rebase", "origin", self.branch)
             self.repo.git.push("origin", self.branch)
         except GitCommandError as e:
             logging.error(f"Git operation failed during write for {path}: {e}")
@@ -92,9 +92,9 @@ class GitFileStorage(FileStorage):
                 os.remove(full_path)
                 self.repo.git.add(full_path)
                 self.repo.index.commit(f"Remove {path}")
-                # Always pull before pushing to avoid non-fast-forward errors
+                # Always pull (rebasing local commits) before pushing to avoid non-fast-forward errors
                 self.repo.git.fetch("origin", self.branch)
-                self.repo.git.pull("origin", self.branch)
+                self.repo.git.pull("--rebase", "origin", self.branch)
                 self.repo.git.push("origin", self.branch)
             except GitCommandError as e:
                 logging.error(f"Git operation failed during remove for {path}: {e}")
