@@ -91,7 +91,22 @@ def push_startup_commit():
     """Push an empty commit to indicate app startup"""
     try:
         # Get the current working directory as the repo
-        repo = Repo(os.getcwd())
+        repo_path = os.getcwd()
+        
+        # Configure git to trust this directory (needed in HF Spaces)
+        try:
+            Repo.init(repo_path).git.config('--global', '--add', 'safe.directory', repo_path)
+        except:
+            pass  # Ignore if already configured
+        
+        repo = Repo(repo_path)
+        
+        # Configure git user if not set (needed for commits)
+        try:
+            repo.git.config('--global', 'user.email', 'app@nebenchat.space')
+            repo.git.config('--global', 'user.name', 'NebenChat App')
+        except:
+            pass  # Ignore if already configured
         
         # Create an empty commit with timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
