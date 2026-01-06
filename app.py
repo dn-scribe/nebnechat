@@ -93,20 +93,20 @@ def push_startup_commit():
         # Get the current working directory as the repo
         repo_path = os.getcwd()
         
-        # Configure git to trust this directory (needed in HF Spaces)
+        # Configure git to trust this directory FIRST (needed in HF Spaces)
+        import subprocess
         try:
-            Repo.init(repo_path).git.config('--global', '--add', 'safe.directory', repo_path)
-        except:
-            pass  # Ignore if already configured
+            subprocess.run(['git', 'config', '--global', '--add', 'safe.directory', repo_path], 
+                         check=False, capture_output=True)
+            subprocess.run(['git', 'config', '--global', 'user.email', 'app@nebenchat.space'], 
+                         check=False, capture_output=True)
+            subprocess.run(['git', 'config', '--global', 'user.name', 'NebenChat App'], 
+                         check=False, capture_output=True)
+        except Exception as e:
+            logging.debug(f"Git config setup: {e}")
         
+        # Now initialize the repo
         repo = Repo(repo_path)
-        
-        # Configure git user if not set (needed for commits)
-        try:
-            repo.git.config('--global', 'user.email', 'app@nebenchat.space')
-            repo.git.config('--global', 'user.name', 'NebenChat App')
-        except:
-            pass  # Ignore if already configured
         
         # Create an empty commit with timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
