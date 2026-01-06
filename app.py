@@ -90,23 +90,18 @@ def debug_session():
 def push_startup_commit():
     """Push an empty commit to indicate app startup"""
     try:
-        # Get the current working directory as the repo
-        repo_path = os.getcwd()
+        # Use the nebenchat-data repository instead of the app repo
+        git_url = os.environ.get("GIT_STORAGE")
+        if not git_url:
+            logging.warning("GIT_STORAGE not configured, skipping startup commit")
+            return False
         
-        # Configure git to trust this directory FIRST (needed in HF Spaces)
-        import subprocess
-        try:
-            subprocess.run(['git', 'config', '--global', '--add', 'safe.directory', repo_path], 
-                         check=False, capture_output=True)
-            subprocess.run(['git', 'config', '--global', 'user.email', 'app@nebenchat.space'], 
-                         check=False, capture_output=True)
-            subprocess.run(['git', 'config', '--global', 'user.name', 'NebenChat App'], 
-                         check=False, capture_output=True)
-        except Exception as e:
-            logging.debug(f"Git config setup: {e}")
+        # Import here to avoid circular dependency
+        from git_storage import GitFileStorage
         
-        # Now initialize the repo
-        repo = Repo(repo_path)
+        # Initialize storage (this clones/opens the data repo)
+        storage = GitFileStorage(git_url)
+        repo = storage.repo
         
         # Create an empty commit with timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
