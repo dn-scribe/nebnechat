@@ -5,6 +5,10 @@ from flask import Flask, render_template, session, redirect, url_for, request
 from werkzeug.middleware.proxy_fix import ProxyFix
 from git import Repo, GitCommandError
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables from .env for local/dev usage
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -132,7 +136,8 @@ def push_startup_commit():
         logging.error(error_msg)
         return False
 
-# Push startup commit when app initializes
-if HF_SPACE:
-    logging.info("Pushing startup commit...")
+# Push startup commit when app initializes or when forced locally
+FORCE_STARTUP_COMMIT = os.environ.get('FORCE_STARTUP_COMMIT') == '1'
+if HF_SPACE or FORCE_STARTUP_COMMIT:
+    logging.info("Pushing startup commit (forced=%s)...", FORCE_STARTUP_COMMIT)
     push_startup_commit()

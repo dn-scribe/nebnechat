@@ -35,17 +35,18 @@ class GitFileStorage(FileStorage):
 
     def _with_credentials(self, repo_url: str) -> str:
         """Inject credentials into repo URL when not already provided."""
-        parsed = urlparse(repo_url)
+        expanded_url = os.path.expandvars(repo_url)
+        parsed = urlparse(expanded_url)
         # If credentials already embedded, respect existing configuration
         if parsed.username and parsed.password:
-            return repo_url
+            return expanded_url
 
         token = os.environ.get("GIT_STORAGE_TOKEN") or os.environ.get("GITHUB_TOKEN")
         if not token:
             logging.warning("Git storage token missing; repository may be read-only")
-            return repo_url
+            return expanded_url
 
-        username = parsed.username or os.environ.get("GIT_STORAGE_USER") or os.environ.get("GITHUB_USERNAME") or "dn-scribe"
+        username = parsed.username or os.environ.get("GIT_STORAGE_USER") or os.environ.get("GITHUB_USERNAME") or "x-access-token"
         hostname = parsed.hostname or parsed.netloc or "github.com"
         if parsed.port and hostname.find(":") == -1:
             hostname = f"{hostname}:{parsed.port}"
