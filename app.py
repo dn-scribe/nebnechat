@@ -3,6 +3,8 @@ import json
 import logging
 from flask import Flask, render_template, session, redirect, url_for, request
 from werkzeug.middleware.proxy_fix import ProxyFix
+from git import Repo, GitCommandError
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -84,3 +86,36 @@ def debug_session():
         'app_config': {k: str(v) for k, v in app.config.items() if 'SECRET' not in k.upper()}
     }
     return render_template('base.html', content=f'<pre>{json.dumps(output, indent=2)}</pre>')
+
+def push_startup_commit():
+    """Push an empty commit to indicate app startup"""
+    try:
+        # Get the current working directory as the repo
+        repo = Repo(os.getcwd())
+        
+        # Create an empty commit with timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        commit_message = f"app started - {timestamp}"
+        
+        # Allow empty commit
+        repo.git.commit('--allow-empty', '-m', commit_message)
+        
+        # Push to origin
+        origin = repo.remote(name='origin')
+        origin.push()
+        
+        logging.info(f"✓ Successfully pushed startup commit: {commit_message}")
+        return True
+    except GitCommandError as e:
+        error_msg = f"✗ Git command failed during startup commit: {str(e)}"
+        logging.error(error_msg)
+        return False
+    except Exception as e:
+        error_msg = f"✗ Failed to push startup commit: {str(e)}"
+        logging.error(error_msg)
+        return False
+
+# Push startup commit when app initializes
+if HF_SPACE:
+    logging.info("Pushing startup commit...")
+    push_startup_commit()
