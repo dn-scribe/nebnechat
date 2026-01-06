@@ -103,6 +103,13 @@ def push_startup_commit():
         storage = GitFileStorage(git_url)
         repo = storage.repo
         
+        # Configure git user for commits
+        try:
+            repo.config_writer().set_value("user", "name", "NebenChat App").release()
+            repo.config_writer().set_value("user", "email", "app@nebenchat.space").release()
+        except Exception as e:
+            logging.debug(f"Git config setup: {e}")
+        
         # Create an empty commit with timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         commit_message = f"app started - {timestamp}"
