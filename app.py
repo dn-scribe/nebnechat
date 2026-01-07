@@ -3,7 +3,6 @@ import json
 import logging
 from flask import Flask, render_template, session, redirect, url_for, request
 from werkzeug.middleware.proxy_fix import ProxyFix
-from git import Repo, GitCommandError
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -91,53 +90,8 @@ def debug_session():
     }
     return render_template('base.html', content=f'<pre>{json.dumps(output, indent=2)}</pre>')
 
-def push_startup_commit():
-    """Push an empty commit to indicate app startup"""
-    try:
-        # Use the nebenchat-data repository instead of the app repo
-        git_url = os.environ.get("GIT_STORAGE")
-        if not git_url:
-            logging.warning("GIT_STORAGE not configured, skipping startup commit")
-            return False
-        
-        # Import here to avoid circular dependency
-        from git_storage import GitFileStorage
-        
-        # Initialize storage (this clones/opens the data repo)
-        storage = GitFileStorage(git_url)
-        repo = storage.repo
-        
-        # Configure git user for commits
-        try:
-            repo.config_writer().set_value("user", "name", "NebenChat App").release()
-            repo.config_writer().set_value("user", "email", "app@nebenchat.space").release()
-        except Exception as e:
-            logging.debug(f"Git config setup: {e}")
-        
-        # Create an empty commit with timestamp
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        commit_message = f"app started - {timestamp}"
-        
-        # Allow empty commit
-        repo.git.commit('--allow-empty', '-m', commit_message)
-        
-        # Push to origin
-        origin = repo.remote(name='origin')
-        origin.push()
-        
-        logging.info(f"✓ Successfully pushed startup commit: {commit_message}")
-        return True
-    except GitCommandError as e:
-        error_msg = f"✗ Git command failed during startup commit: {str(e)}"
-        logging.error(error_msg)
-        return False
-    except Exception as e:
-        error_msg = f"✗ Failed to push startup commit: {str(e)}"
-        logging.error(error_msg)
-        return False
-
-# Push startup commit when app initializes or when forced locally
-FORCE_STARTUP_COMMIT = os.environ.get('FORCE_STARTUP_COMMIT') == '1'
-if HF_SPACE or FORCE_STARTUP_COMMIT:
-    logging.info("Pushing startup commit (forced=%s)...", FORCE_STARTUP_COMMIT)
-    push_startup_commit()
+# Startup logging
+if HF_SPACE:
+    logging.info("App started in Hugging Face Space")
+else:
+    logging.info("App started in local/development mode")
