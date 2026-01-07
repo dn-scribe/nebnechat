@@ -948,9 +948,9 @@ def download_image(filename):
         file_data = storage.read(storage_path, mode="rb")
         return send_file(
             BytesIO(file_data),
-            as_attachment=True,
-            download_name=filename,
-            mimetype=mimetype
+            mimetype=mimetype,
+            as_attachment=False,
+            download_name=filename
         )
     except Exception as e:
         logging.error(f"Error downloading image: {e}")
