@@ -183,9 +183,14 @@ class GitHubAPIFileStorage(FileStorage):
             result = response.json()
             if "content" in result and "sha" in result["content"]:
                 self._sha_cache[path] = result["content"]["sha"]
+                logging.info(f"Successfully wrote {len(content_bytes)} bytes to {path}")
+            else:
+                logging.warning(f"Write response for {path} missing content/sha: {result}")
                 
         except requests.exceptions.RequestException as e:
             logging.error(f"GitHub API request failed for {path}: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                logging.error(f"Response status: {e.response.status_code}, body: {e.response.text[:500]}")
             raise GitHubAPIStorageError(f"Failed to write {path}: {e}") from e
     
     def remove(self, path: str) -> None:

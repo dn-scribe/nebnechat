@@ -413,8 +413,8 @@ def send_message():
                 file_data = file.read()
                 try:
                     storage.write(storage_path, file_data, mode="wb")
-                except GitStorageError as e:
-                    logging.error(f"Git storage error during file upload: {e}")
+                except GitHubAPIStorageError as e:
+                    logging.error(f"Storage error during file upload: {e}")
                     return jsonify({'error': 'A storage error occurred. Your file could not be saved. Please try again later.'}), 500
                 uploaded_file = storage_path
                 filename = safe_filename
@@ -680,8 +680,8 @@ def generate_file():
         storage_path = f"{storage_dir}/{full_filename}"
         try:
             storage.write(storage_path, file_content, mode="w", encoding="utf-8")
-        except GitStorageError as e:
-            logging.error(f"Git storage error during file generation: {e}")
+        except GitHubAPIStorageError as e:
+            logging.error(f"Storage error during file generation: {e}")
             return jsonify({'error': 'A storage error occurred. Your generated file could not be saved. Please try again later.'}), 500
         file_path = storage_path
     
@@ -787,8 +787,8 @@ def generate_image():
             img_resp.raise_for_status()
             try:
                 storage.write(storage_path, img_resp.content, mode="wb")
-            except GitStorageError as e:
-                logging.error(f"Git storage error during image save: {e}")
+            except GitHubAPIStorageError as e:
+                logging.error(f"Storage error during image save: {e}")
                 return jsonify({'error': 'A storage error occurred. Your generated image could not be saved. Please try again later.'}), 500
         except Exception as e:
             logging.error(f"Error downloading generated image: {e}")
